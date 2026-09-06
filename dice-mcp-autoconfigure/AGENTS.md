@@ -2,7 +2,7 @@
 
 Spring Boot wiring that exports [DiceMcpTools](../dice/src/main/kotlin/com/embabel/dice/mcp/DiceMcpTools.kt)
 over embabel-agent's MCP server. No domain logic — just an `@AutoConfiguration` that assembles beans
-from `dice`. `context_id` on every tool is a caller-supplied scope, not a credential — the
+from `dice`. `contextId` on every tool is a caller-supplied scope, not a credential. The
 check lives on `DiceMcpTools` itself; authorization is the host MCP server's job.
 
 ## What's here
@@ -12,7 +12,7 @@ check lives on `DiceMcpTools` itself; authorization is the host MCP server's job
   `PropositionRepository` bean. `afterName` waits for `DiceStorageAutoConfiguration` when that
   module is present so the store bean exists before `@ConditionalOnBean` is asked.
 - **`DiceMcpProperties`** — `embabel.dice.mcp`: `enabled` (default false), `min-confidence`
-  (default 0.5), `default-limit` (default 10).
+  (default 0.5), `default-limit` (default 10), `writes-enabled` (default false).
 
 ## Property reference
 
@@ -21,6 +21,7 @@ check lives on `DiceMcpTools` itself; authorization is the host MCP server's job
 | `embabel.dice.mcp.enabled` | `false` | Master switch. Off means no beans. |
 | `embabel.dice.mcp.min-confidence` | `0.5` | Minimum effective confidence for recall/list |
 | `embabel.dice.mcp.default-limit` | `10` | Default result cap for recall/list. Must be `1..100` |
+| `embabel.dice.mcp.writes-enabled` | `false` | When true, export also includes `dice_store` |
 
 Every collaborator is `@ConditionalOnMissingBean`, so an app's own `DiceMcpTools` or
 `diceMcpToolExport` bean wins.
@@ -35,7 +36,8 @@ Every collaborator is `@ConditionalOnMissingBean`, so an app's own `DiceMcpTools
 ## Gotchas
 
 - MCP export is **opt-in**. Unlike the collector (`enabled` default true), this stays dark until
-  `embabel.dice.mcp.enabled=true`.
+  `embabel.dice.mcp.enabled=true`. `dice_store` is a second switch (`writes-enabled`, default
+  false) because a direct write skips extraction, admission, and provenance.
 - Without a `PropositionRepository` bean the auto-config class may load but it exports nothing.
 - `default-limit` is bounded by `DiceMcpTools.MAX_LIMIT` (100), the ceiling the tools clamp every
   caller-supplied `limit` to. A larger default would bind and then be silently truncated on every

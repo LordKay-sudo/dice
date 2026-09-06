@@ -78,7 +78,7 @@ class DiceMcpAutoConfigurationTest {
     }
 
     @Test
-    fun `enabled with a repository wires tools and exports the four names`() {
+    fun `enabled with a repository wires tools and exports the read names`() {
         runner
             .withUserConfiguration(StubPropositionRepositoryConfig::class.java)
             .withPropertyValues("embabel.dice.mcp.enabled=true")
@@ -88,7 +88,48 @@ class DiceMcpAutoConfigurationTest {
 
                 val export = ctx.getBean<McpToolExport>("diceMcpToolExport")
                 val names = export.toolCallbacks.map { it.toolDefinition.name() }.toSet()
+                assertThat(names).isEqualTo(DiceMcpTools.READ_TOOL_NAMES)
+                assertThat(names).doesNotContain(DiceMcpTools.STORE)
+                assertThat(ctx.getBean<DiceMcpProperties>().writesEnabled).isFalse()
+            }
+    }
+
+    @Test
+    fun `writes-enabled exports store as well`() {
+        runner
+            .withUserConfiguration(StubPropositionRepositoryConfig::class.java)
+            .withPropertyValues(
+                "embabel.dice.mcp.enabled=true",
+                "embabel.dice.mcp.writes-enabled=true",
+            )
+            .run { ctx ->
+                assertThat(ctx.getBean<DiceMcpProperties>().writesEnabled).isTrue()
+                val export = ctx.getBean<McpToolExport>("diceMcpToolExport")
+                val names = export.toolCallbacks.map { it.toolDefinition.name() }.toSet()
                 assertThat(names).isEqualTo(DiceMcpTools.TOOL_NAMES)
+            }
+    }
+
+    @Test
+    fun `exported list callback accepts documented camelCase JSON with optionals omitted`() {
+        runner
+            .withUserConfiguration(StubPropositionRepositoryConfig::class.java)
+            .withPropertyValues(
+                "embabel.dice.mcp.enabled=true",
+                "embabel.dice.mcp.min-confidence=0.0",
+            )
+            .run { ctx ->
+                val tools = ctx.getBean<DiceMcpTools>()
+                tools.storeMemory("session-1", "Only fact", confidence = 0.9)
+
+                val export = ctx.getBean<McpToolExport>("diceMcpToolExport")
+                val list = export.toolCallbacks.single { it.toolDefinition.name() == DiceMcpTools.LIST }
+                val schema = list.toolDefinition.inputSchema()
+                assertThat(schema).contains("contextId")
+                assertThat(schema).doesNotContain("context_id")
+
+                val result = list.call("""{"contextId":"session-1"}""")
+                assertThat(result).contains("Only fact")
             }
     }
 
@@ -100,11 +141,13 @@ class DiceMcpAutoConfigurationTest {
                 "embabel.dice.mcp.enabled=true",
                 "embabel.dice.mcp.min-confidence=0.7",
                 "embabel.dice.mcp.default-limit=3",
+                "embabel.dice.mcp.writes-enabled=true",
             )
             .run { ctx ->
                 val props = ctx.getBean<DiceMcpProperties>()
                 assertThat(props.minConfidence).isEqualTo(0.7)
                 assertThat(props.defaultLimit).isEqualTo(3)
+                assertThat(props.writesEnabled).isTrue()
             }
     }
 
@@ -207,7 +250,7 @@ class DiceMcpAutoConfigurationTest {
 
                 val export = ctx.getBean<McpToolExport>("diceMcpToolExport")
                 val names = export.toolCallbacks.map { it.toolDefinition.name() }.toSet()
-                assertThat(names).isEqualTo(DiceMcpTools.TOOL_NAMES)
+                assertThat(names).isEqualTo(DiceMcpTools.READ_TOOL_NAMES)
             }
     }
 

@@ -27,14 +27,16 @@ import org.slf4j.LoggerFactory
  *
  * In-process [com.embabel.dice.agent.Memory] and [com.embabel.dice.agent.DiscoveryTools] bake
  * [ContextId] in at construction, so an agent cannot name another tenant. MCP clients are
- * stateless and may serve many sessions, so every tool takes an explicit `context_id`. That is
+ * stateless and may serve many sessions, so every tool takes an explicit `contextId`. That is
  * a caller-supplied scope, not a credential: it keeps one call from crossing contexts, and
- * authorization is the host MCP server's job. Recall and list start from
- * [com.embabel.dice.proposition.PropositionQuery.forContextId]; get collapses a missing id and
- * a foreign id into one answer so the tool cannot confirm that an id it does not own exists.
+ * authorization is the host MCP server's job. `dice_recall` and `dice_list` start from
+ * [com.embabel.dice.proposition.PropositionQuery.forContextId]; `dice_get` collapses a missing
+ * id and a foreign id into one answer so the tool cannot confirm that an id it does not own
+ * exists.
  *
- * Rod's #5: expose tools with simplified parameters. This class is that surface: recall, list,
- * store, get. Extraction and discovery stay on the existing in-process `asTools()` path.
+ * Rod's #5: expose tools with simplified parameters. This class is that surface:
+ * `dice_recall`, `dice_list`, `dice_store`, `dice_get`. Extraction and discovery stay on the
+ * existing in-process `asTools()` path.
  *
  * Export through embabel-agent's [com.embabel.agent.mcpserver.McpToolExport], or add
  * `dice-mcp-autoconfigure` with `embabel.dice.mcp.enabled=true`.
@@ -57,21 +59,20 @@ class DiceMcpTools(
     }
 
     /**
-     * Run a tool body, keeping store and driver detail away from the caller.
+     * Run a store call, keeping driver detail away from the caller.
      *
-     * [IllegalArgumentException] is ours — a blank `context_id`, a blank `text` — so it passes
-     * through and tells the model what to fix. Anything else came from the store: the cause is
-     * logged here and the exception thrown on has **no cause attached**, so a stack trace
-     * serialized back by the MCP layer cannot carry Cypher, hostnames, or credentials to an
-     * external client. Same rule `DiscoveryController` applies to its own 500s.
+     * Caller validation happens **before** this wrapper so a blank `contextId` still throws
+     * [IllegalArgumentException]. Everything thrown from here, including a store
+     * [IllegalArgumentException], becomes a cause-free generic failure.
+     *
+     * [MethodTool] then logs that sanitized exception, not the store one. This method logs
+     * `e.message` only, so operators still see the driver text without a second stack.
      */
     private fun guarded(tool: String, block: () -> String): String =
         try {
             block()
-        } catch (e: IllegalArgumentException) {
-            throw e
         } catch (e: Exception) {
-            logger.error("MCP tool {} failed", tool, e)
+            logger.error("MCP tool {} failed: {}", tool, e.message ?: e.toString())
             throw IllegalStateException("$tool failed: the knowledge store is unavailable")
         }
 
@@ -87,18 +88,21 @@ class DiceMcpTools(
     fun recall(
         @LlmTool.Param(description = "Context to search within (session, user, or tenant id).")
         contextId: String,
-        @LlmTool.Param(description = "What to recall, in natural language. Omit to list all memories.")
+        @LlmTool.Param(description = "What to recall, in natural language. Omit to list all memories.", required = false)
         query: String? = null,
-        @LlmTool.Param(description = "Maximum results (default 10, capped at 100).")
+        @LlmTool.Param(description = "Maximum results (default 10, capped at 100).", required = false)
         limit: Int = defaultLimit,
-    ): String = guarded(RECALL) {
-        DiceMcpSupport.recall(
-            repository = repository,
-            contextId = contextId,
-            query = query,
-            limit = limit.coerceIn(1, MAX_LIMIT),
-            minConfidence = minConfidence,
-        )
+    ): String {
+        DiceMcpSupport.requireContextId(contextId)
+        return guarded(RECALL) {
+            DiceMcpSupport.recall(
+                repository = repository,
+                contextId = contextId,
+                query = query,
+                limit = limit.coerceIn(1, MAX_LIMIT),
+                minConfidence = minConfidence,
+            )
+        }
     }
 
     /**
@@ -111,21 +115,23 @@ class DiceMcpTools(
     fun listMemories(
         @LlmTool.Param(description = "Context to list.")
         contextId: String,
-        @LlmTool.Param(description = "Maximum results (default 10, capped at 100).")
+        @LlmTool.Param(description = "Maximum results (default 10, capped at 100).", required = false)
         limit: Int = defaultLimit,
-    ): String = guarded(LIST) {
+    ): String {
         val scoped = DiceMcpSupport.requireContextId(contextId)
-        val query = DiceMcpSupport.baseQuery(scoped, minConfidence)
-            .orderedByEffectiveConfidence()
-            .withLimit(limit.coerceIn(1, MAX_LIMIT))
-        val propositions = repository.query(query)
-        if (propositions.isEmpty()) {
-            "No memories in context '$scoped'."
-        } else {
-            DiceMcpSupport.render(
-                "Found ${propositions.size} memories in context '$scoped':",
-                propositions,
-            )
+        return guarded(LIST) {
+            val query = DiceMcpSupport.baseQuery(scoped, minConfidence)
+                .orderedByEffectiveConfidence()
+                .withLimit(limit.coerceIn(1, MAX_LIMIT))
+            val propositions = repository.query(query)
+            if (propositions.isEmpty()) {
+                "No memories in context '$scoped'."
+            } else {
+                DiceMcpSupport.render(
+                    "Found ${propositions.size} memories in context '$scoped':",
+                    propositions,
+                )
+            }
         }
     }
 
@@ -141,19 +147,21 @@ class DiceMcpTools(
         contextId: String,
         @LlmTool.Param(description = "The fact to remember, in natural language.")
         text: String,
-        @LlmTool.Param(description = "Confidence between 0 and 1 (default 0.8).")
+        @LlmTool.Param(description = "Confidence between 0 and 1 (default 0.8).", required = false)
         confidence: Double = 0.8,
-    ): String = guarded(STORE) {
+    ): String {
         val scoped = DiceMcpSupport.requireContextId(contextId)
         require(text.isNotBlank()) { "text must not be blank" }
-        val proposition = Proposition(
-            contextId = ContextId(scoped),
-            text = text.trim(),
-            mentions = emptyList(),
-            confidence = confidence.coerceIn(0.0, 1.0),
-        )
-        val saved = repository.save(proposition)
-        "Stored proposition ${saved.id}: ${saved.text}"
+        return guarded(STORE) {
+            val proposition = Proposition(
+                contextId = ContextId(scoped),
+                text = text.trim(),
+                mentions = emptyList(),
+                confidence = confidence.coerceIn(0.0, 1.0),
+            )
+            val saved = repository.save(proposition)
+            "Stored proposition ${saved.id}: ${saved.text}"
+        }
     }
 
     /**
@@ -168,18 +176,20 @@ class DiceMcpTools(
         contextId: String,
         @LlmTool.Param(description = "Proposition id returned by recall, list, or store.")
         propositionId: String,
-    ): String = guarded(GET) {
+    ): String {
         val scoped = DiceMcpSupport.requireContextId(contextId)
         val id = propositionId.trim()
-        require(id.isNotBlank()) { "proposition_id must not be blank" }
-        val proposition = repository.findById(id)
-        // One answer for "no such id" and "that id lives in another context". Distinguishing
-        // them would confirm to a caller that an id it does not own exists somewhere, and
-        // MemoryController collapses both into a 404 for exactly that reason.
-        if (proposition == null || proposition.contextIdValue != scoped) {
-            "No proposition with id '$id' in context '$scoped'."
-        } else {
-            DiceMcpSupport.formatProposition(proposition)
+        require(id.isNotBlank()) { "propositionId must not be blank" }
+        return guarded(GET) {
+            val proposition = repository.findById(id)
+            // One answer for "no such id" and "that id lives in another context". Distinguishing
+            // them would confirm to a caller that an id it does not own exists somewhere, and
+            // MemoryController collapses both into a 404 for exactly that reason.
+            if (proposition == null || proposition.contextIdValue != scoped) {
+                "No proposition with id '$id' in context '$scoped'."
+            } else {
+                DiceMcpSupport.formatDetail(proposition)
+            }
         }
     }
 
@@ -190,6 +200,9 @@ class DiceMcpTools(
         const val GET = "dice_get"
 
         val TOOL_NAMES: Set<String> = setOf(RECALL, LIST, STORE, GET)
+
+        /** Names exported when writes are off. */
+        val READ_TOOL_NAMES: Set<String> = setOf(RECALL, LIST, GET)
 
         const val DEFAULT_MIN_CONFIDENCE = 0.5
         const val DEFAULT_LIMIT = 10

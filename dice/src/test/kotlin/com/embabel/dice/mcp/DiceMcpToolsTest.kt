@@ -15,6 +15,7 @@
  */
 package com.embabel.dice.mcp
 
+import com.embabel.agent.api.tool.Tool
 import com.embabel.agent.core.ContextId
 import com.embabel.dice.proposition.EntityMention
 import com.embabel.dice.proposition.Proposition
@@ -151,10 +152,28 @@ class DiceMcpToolsTest {
             )
             val fetched = tools.getProposition("session-1", proposition.id)
             assertTrue(fetched.contains("Old fact"))
+            assertTrue(fetched.contains("status=STALE"), fetched)
+            assertFalse(fetched.contains("status=ACTIVE"), fetched)
         }
 
         @Test
-        fun `whitespace around context_id is trimmed`() {
+        fun `get of a contradicted proposition shows that status`() {
+            val proposition = repository.save(
+                Proposition(
+                    contextId = ContextId("session-1"),
+                    text = "Disputed fact",
+                    mentions = emptyList(),
+                    confidence = 0.8,
+                    status = PropositionStatus.CONTRADICTED,
+                ),
+            )
+            val fetched = tools.getProposition("session-1", proposition.id)
+            assertTrue(fetched.contains("status=CONTRADICTED"), fetched)
+            assertTrue(fetched.contains("Disputed fact"))
+        }
+
+        @Test
+        fun `whitespace around contextId is trimmed`() {
             val stored = tools.storeMemory("  session-1  ", "Padded context fact")
             val id = stored.substringAfter("Stored proposition ").substringBefore(":")
             val fetched = tools.getProposition(" session-1", id)
@@ -629,6 +648,7 @@ class DiceMcpToolsTest {
             )
             val listed = tools.listMemories("session-1", limit = 10)
             assertTrue(listed.contains("Jim (Person)"))
+            assertTrue(listed.contains("confidence=0.90"), listed)
         }
     }
 
@@ -679,6 +699,65 @@ class DiceMcpToolsTest {
                 names,
             )
         }
+
+        @Test
+        fun `exported schema uses camelCase names and marks optionals not required`() {
+            val exported = DiceMcpTools.asTools(tools).associateBy { it.definition.name }
+
+            val recall = params(exported, DiceMcpTools.RECALL)
+            assertEquals(setOf("contextId", "query", "limit"), recall.keys)
+            assertTrue(recall.getValue("contextId").required)
+            assertFalse(recall.getValue("query").required)
+            assertFalse(recall.getValue("limit").required)
+
+            val list = params(exported, DiceMcpTools.LIST)
+            assertEquals(setOf("contextId", "limit"), list.keys)
+            assertTrue(list.getValue("contextId").required)
+            assertFalse(list.getValue("limit").required)
+
+            val store = params(exported, DiceMcpTools.STORE)
+            assertEquals(setOf("contextId", "text", "confidence"), store.keys)
+            assertTrue(store.getValue("contextId").required)
+            assertTrue(store.getValue("text").required)
+            assertFalse(store.getValue("confidence").required)
+
+            val get = params(exported, DiceMcpTools.GET)
+            assertEquals(setOf("contextId", "propositionId"), get.keys)
+            assertTrue(get.getValue("contextId").required)
+            assertTrue(get.getValue("propositionId").required)
+        }
+
+        @Test
+        fun `documented camelCase JSON invokes list and recall with optionals omitted`() {
+            tools.storeMemory("session-1", "Only fact", confidence = 0.9)
+            val exported = DiceMcpTools.asTools(tools).associateBy { it.definition.name }
+
+            val listed = exported.getValue(DiceMcpTools.LIST).call("""{"contextId":"session-1"}""")
+            assertTrue((listed as Tool.Result.Text).content.contains("Only fact"), listed.content)
+
+            val recalled = exported.getValue(DiceMcpTools.RECALL).call("""{"contextId":"session-1"}""")
+            assertTrue((recalled as Tool.Result.Text).content.contains("Only fact"), recalled.content)
+        }
+
+        @Test
+        fun `documented camelCase JSON invokes get and store`() {
+            val exported = DiceMcpTools.asTools(tools).associateBy { it.definition.name }
+            val stored = exported.getValue(DiceMcpTools.STORE).call(
+                """{"contextId":"session-1","text":"Documented store"}""",
+            )
+            val storedText = (stored as Tool.Result.Text).content
+            assertTrue(storedText.startsWith("Stored proposition"), storedText)
+            val id = storedText.substringAfter("Stored proposition ").substringBefore(":")
+
+            val fetched = exported.getValue(DiceMcpTools.GET).call(
+                """{"contextId":"session-1","propositionId":"$id"}""",
+            )
+            assertTrue((fetched as Tool.Result.Text).content.contains("Documented store"), fetched.content)
+            assertTrue(fetched.content.contains("status=ACTIVE"), fetched.content)
+        }
+
+        private fun params(exported: Map<String, Tool>, name: String) =
+            exported.getValue(name).definition.inputSchema.parameters.associateBy { it.name }
     }
 
     @Nested
@@ -752,6 +831,18 @@ class DiceMcpToolsTest {
             }
         }
 
+        @Test
+        fun `store IllegalArgumentException from the repository is sanitized`() {
+            val iaeFailing = DiceMcpTools(LeakingStore(leak, asArgument = true), minConfidence = 0.0)
+            val thrown = assertThrows<IllegalStateException> {
+                iaeFailing.storeMemory("session-1", "A fact")
+            }
+            assertTrue(thrown.message!!.endsWith("failed: the knowledge store is unavailable"))
+            assertEquals(null, thrown.cause)
+            assertFalse(thrown.message!!.contains(leak))
+            assertFalse(thrown.stackTraceToString().contains(leak))
+        }
+
         private fun assertSanitized(call: () -> String) {
             val thrown = assertThrows<IllegalStateException> { call() }
             assertTrue(thrown.message!!.endsWith("failed: the knowledge store is unavailable"))
@@ -770,6 +861,7 @@ class DiceMcpToolsTest {
      */
     private class LeakingStore(
         private val leak: String,
+        private val asArgument: Boolean = false,
     ) : PropositionRepository by InMemoryPropositionRepository() {
         override fun save(proposition: Proposition): Proposition = explode()
         override fun findById(id: String): Proposition? = explode()
@@ -782,6 +874,6 @@ class DiceMcpToolsTest {
         ): List<Proposition> = explode()
 
         private fun explode(): Nothing =
-            throw RuntimeException(leak)
+            if (asArgument) throw IllegalArgumentException(leak) else throw RuntimeException(leak)
     }
 }

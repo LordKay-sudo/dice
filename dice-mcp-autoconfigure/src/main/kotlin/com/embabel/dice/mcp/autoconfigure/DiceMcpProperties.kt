@@ -35,6 +35,12 @@ data class DiceMcpProperties(
      * value would be silently clamped at call time, so it fails startup instead.
      */
     val defaultLimit: Int = 10,
+    /**
+     * When false (the default), `dice_store` is omitted from the export. Store writes an ACTIVE
+     * proposition without extraction, admission, or provenance; that is a different capability
+     * from recall and is independently opt-in.
+     */
+    val writesEnabled: Boolean = false,
 ) {
     init {
         require(minConfidence in 0.0..1.0) { "embabel.dice.mcp.min-confidence must be between 0.0 and 1.0" }

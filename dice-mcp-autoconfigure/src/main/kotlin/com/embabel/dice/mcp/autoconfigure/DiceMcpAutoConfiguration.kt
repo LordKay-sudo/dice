@@ -48,6 +48,7 @@ import org.springframework.context.annotation.Bean
  *   dice:
  *     mcp:
  *       enabled: true
+ *       writes-enabled: true   # optional; dice_store stays off otherwise
  * ```
  *
  * `afterName` waits for `dice-storage-autoconfigure` when that module is on the classpath, so
@@ -77,8 +78,14 @@ class DiceMcpAutoConfiguration {
     @Bean("diceMcpToolExport")
     @ConditionalOnBean(DiceMcpTools::class)
     @ConditionalOnMissingBean(name = ["diceMcpToolExport"])
-    fun diceMcpToolExport(tools: DiceMcpTools): McpToolExport {
-        logger.info("Exporting DICE MCP tools: {}", DiceMcpTools.TOOL_NAMES.sorted())
-        return McpToolExport.fromToolObject(ToolObject(objects = listOf(tools)))
+    fun diceMcpToolExport(tools: DiceMcpTools, properties: DiceMcpProperties): McpToolExport {
+        val exported = if (properties.writesEnabled) {
+            ToolObject(objects = listOf(tools))
+        } else {
+            ToolObject(objects = listOf(tools)).withFilter { it != DiceMcpTools.STORE }
+        }
+        val names = if (properties.writesEnabled) DiceMcpTools.TOOL_NAMES else DiceMcpTools.READ_TOOL_NAMES
+        logger.info("Exporting DICE MCP tools: {}", names.sorted())
+        return McpToolExport.fromToolObject(exported)
     }
 }

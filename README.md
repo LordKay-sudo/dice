@@ -2418,9 +2418,11 @@ Everything is pushed into the database rather than scanned in memory:
 
 Expose DICE recall/list/store/get to an MCP client (Claude Desktop, Cursor, etc.) with
 `dice-mcp-autoconfigure` and embabel-agent's MCP server starter. Off until you set
-`embabel.dice.mcp.enabled=true`. Every tool takes a `context_id` — that is a scope, not a
-credential. It keeps one call from reading another context; authorization is the host MCP
-server's job. In-process `Memory` / `DiscoveryTools` bake context in at construction instead.
+`embabel.dice.mcp.enabled=true`. Every tool takes a `contextId` (the Kotlin parameter name
+`KotlinMethodTool` publishes). That is a scope, not a credential. It keeps one call from
+reading another context; authorization is the host MCP server's job. In-process `Memory` /
+`DiscoveryTools` bake context in at construction instead. `dice_store` is off until you set
+`embabel.dice.mcp.writes-enabled=true`.
 
 ```xml
 <dependency>
@@ -2444,17 +2446,18 @@ embabel:
 
 | Tool | Description |
 |------|-------------|
-| `dice_recall` | Hybrid semantic + keyword search in a `context_id` |
+| `dice_recall` | Hybrid semantic + keyword search in a `contextId` |
 | `dice_list` | List active propositions for a context |
-| `dice_store` | Store a proposition directly (no mentions or provenance — see below) |
-| `dice_get` | Fetch one proposition by id; a miss and a foreign-context id look the same |
+| `dice_store` | Store a proposition directly (off unless `writes-enabled=true`) |
+| `dice_get` | Fetch one proposition by `propositionId`; includes status so a stale fact does not look active |
 
 `dice_recall` and `dice_list` share one result format, each line carrying the `id=` that
 `dice_get` takes, so a client can search and then drill into a single fact. Their `limit` is
 clamped to 100.
 
-`dice_store` writes a fact with empty mentions and no provenance, so it is retrievable by
-vector and keyword only — not by entity expansion or graph projection. Use the ingestion
+`dice_store` is omitted from the export unless `embabel.dice.mcp.writes-enabled=true`. When
+it is on, it writes a fact with empty mentions and no provenance, so it is retrievable by
+vector and keyword only, not by entity expansion or graph projection. Use the ingestion
 pipeline when the fact needs to be wired into the rest of the knowledge flow.
 
 Discovery and graph tools stay on `DiscoveryTools.asTools(...)` / `GraphQueryTools.asTools(...)`.

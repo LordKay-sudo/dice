@@ -21,6 +21,7 @@ import com.embabel.dice.proposition.Proposition
 import com.embabel.dice.proposition.PropositionQuery
 import com.embabel.dice.proposition.PropositionRepository
 import com.embabel.dice.proposition.PropositionStatus
+import java.util.Locale
 
 /**
  * Shared retrieval and formatting helpers for [DiceMcpTools].
@@ -37,8 +38,8 @@ internal object DiceMcpSupport {
      * Takes an id the caller has already put through [requireContextId], so validation happens
      * once per tool call rather than once per query built.
      *
-     * STALE / SUPERSEDED / CONTRADICTED propositions are excluded by default — the same guard
-     * [com.embabel.dice.agent.Memory] applies before results reach an LLM.
+     * `STALE` / `SUPERSEDED` / `CONTRADICTED` propositions are excluded by default. The same
+     * guard [com.embabel.dice.agent.Memory] applies before results reach an LLM.
      */
     fun baseQuery(scopedContextId: String, minConfidence: Double): PropositionQuery =
         PropositionQuery.forContextId(ContextId(scopedContextId))
@@ -47,7 +48,7 @@ internal object DiceMcpSupport {
 
     fun requireContextId(contextId: String): String {
         val scoped = contextId.trim()
-        require(scoped.isNotBlank()) { "context_id must not be blank" }
+        require(scoped.isNotBlank()) { "contextId must not be blank" }
         return scoped
     }
 
@@ -77,7 +78,7 @@ internal object DiceMcpSupport {
             retriever.rankedPropositions(trimmed, base, limit)
         }
         if (hits.isEmpty()) {
-            // The no-query wording matches dice_list's for the same situation. A query miss adds
+            // The no-query wording matches `dice_list` for the same situation. A query miss adds
             // how much *is* in scope, so the caller can tell "your query was wrong, try again"
             // apart from "this context is empty, stop asking".
             return if (trimmed == null) {
@@ -108,7 +109,7 @@ internal object DiceMcpSupport {
     fun formatProposition(proposition: Proposition): String =
         buildString {
             append("id=${proposition.id}")
-            append(" | confidence=${"%.2f".format(proposition.effectiveConfidence())}")
+            append(" | confidence=${"%.2f".format(Locale.ROOT, proposition.effectiveConfidence())}")
             append(" | ${proposition.text}")
             if (proposition.mentions.isNotEmpty()) {
                 val entities = proposition.mentions.joinToString("; ") { mention ->
@@ -117,4 +118,49 @@ internal object DiceMcpSupport {
                 append(" | entities: $entities")
             }
         }
+
+    /**
+     * Detail contract for `dice_get`. `dice_list` and `dice_recall` stay compact; get must show
+     * [Proposition.status] so a stale or contradicted fact does not look active.
+     */
+    fun formatDetail(proposition: Proposition): String {
+        val detail = McpPropositionDetail.from(proposition)
+        return buildString {
+            append("id=${detail.id}")
+            append(" | status=${detail.status}")
+            append(" | confidence=${"%.2f".format(Locale.ROOT, detail.effectiveConfidence)}")
+            append(" | ${detail.text}")
+            if (detail.evidence.isNotEmpty()) {
+                append(" | evidence: ${detail.evidence.joinToString("; ")}")
+            }
+        }
+    }
+}
+
+/**
+ * Outward get payload. MCP still returns text today; this type is the contract so we do not
+ * publish [Proposition] or lock callers to a one-line summary.
+ */
+data class McpPropositionDetail(
+    val id: String,
+    val contextId: String,
+    val text: String,
+    val status: String,
+    val confidence: Double,
+    val effectiveConfidence: Double,
+    val evidence: List<String>,
+) {
+    companion object {
+        fun from(proposition: Proposition): McpPropositionDetail = McpPropositionDetail(
+            id = proposition.id,
+            contextId = proposition.contextIdValue,
+            text = proposition.text,
+            status = proposition.status.name,
+            confidence = proposition.confidence,
+            effectiveConfidence = proposition.effectiveConfidence(),
+            evidence = (proposition.grounding + proposition.provenanceEntries.map { entry ->
+                entry.chunkId ?: entry.locator.toString()
+            }).filter { it.isNotBlank() }.distinct(),
+        )
+    }
 }
