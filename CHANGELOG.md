@@ -406,15 +406,18 @@ and the consumer PRs that deliver it).
   store that never adopted the optional `(contextId, text)` uniqueness constraint. Pipeline,
   collector, and REST behavior are unchanged; those arrive in the following Wave A slices.
 - Length ceilings on the externally supplied strings that become stored identity, in
-  `SourceIdentityBounds`: `MAX_SOURCE_KEY_LENGTH` (2048) and `MAX_SOURCE_REVISION_LENGTH` (1024).
-  Both are checked while `ProvenanceEntry` and `SourceRevisionRef` are being constructed, which sits
-  upstream of every hash and every indexed write, so a runaway value is refused with an
+  `SourceIdentityBounds`: `MAX_SOURCE_KEY_LENGTH` (2048), `MAX_SOURCE_REVISION_LENGTH` (1024),
+  `MAX_CHUNK_ID_LENGTH` (512), and `MAX_CONTENT_HASH_LENGTH` (256).
+  The key and revision are checked while `ProvenanceEntry` and `SourceRevisionRef` are constructed,
+  the chunk id and content hash while `ProvenanceEntry` is. Both sit upstream of every hash and
+  every indexed write, so a runaway value is refused with an
   `IllegalArgumentException` naming the limit it broke, before any store is touched. The numbers are
-  roomy on purpose: 2048 is the practical ceiling browsers and proxies settled on for a URL, and 1024
-  is the longest real revision token we know of, an S3 object version id.
-  **Compatibility: behavioral.** A caller offering a source key or revision longer than the limit now
-  gets a rejection where it previously got an oversized index entry. Nothing a real connector emits
-  comes close to either number.
+  roomy on purpose: 2048 is the practical ceiling browsers and proxies settled on for a URL, 1024
+  is the longest real revision token we know of (an S3 object version id), 512 leaves room for any
+  chunker-minted chunk id, and 256 comfortably covers a SHA-512 content hash in hex.
+  **Compatibility: behavioral.** A caller offering a source key, revision, chunk id or content hash
+  longer than its limit now gets a rejection where it previously got an oversized index entry.
+  Nothing a real connector emits comes close to any of the four.
 
 ### Fixed
 

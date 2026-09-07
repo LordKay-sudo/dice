@@ -159,6 +159,58 @@ class SourceIdentityBoundsTest {
         assertEquals(0, store.interactions, "an over-long revision must never reach the store")
     }
 
+    @Test
+    fun `a chunk id at the limit is accepted`() {
+        val chunkId = "c".repeat(SourceIdentityBounds.MAX_CHUNK_ID_LENGTH)
+        val locator = UriLocator("https://example.com/at-limit-chunk-id")
+
+        assertEquals(chunkId, ProvenanceEntry(locator = locator, chunkId = chunkId).chunkId)
+    }
+
+    @Test
+    fun `a chunk id one over the limit is refused before the store is touched`() {
+        val store = InteractionCountingStore()
+        val locator = UriLocator("https://example.com/over-limit-chunk-id")
+        val chunkId = "c".repeat(SourceIdentityBounds.MAX_CHUNK_ID_LENGTH + 1)
+
+        val failure = assertThrows(IllegalArgumentException::class.java) {
+            store.save(propositionCiting(ProvenanceEntry(locator = locator, chunkId = chunkId)))
+        }
+
+        assertTrue(
+            failure.message!!.contains("MAX_CHUNK_ID_LENGTH") &&
+                failure.message!!.contains("${SourceIdentityBounds.MAX_CHUNK_ID_LENGTH}"),
+            "the refusal must name the limit it enforced: ${failure.message}",
+        )
+        assertEquals(0, store.interactions, "an over-long chunk id must never reach the store")
+    }
+
+    @Test
+    fun `a content hash at the limit is accepted`() {
+        val contentHash = "h".repeat(SourceIdentityBounds.MAX_CONTENT_HASH_LENGTH)
+        val locator = UriLocator("https://example.com/at-limit-content-hash")
+
+        assertEquals(contentHash, ProvenanceEntry(locator = locator, contentHash = contentHash).contentHash)
+    }
+
+    @Test
+    fun `a content hash one over the limit is refused before the store is touched`() {
+        val store = InteractionCountingStore()
+        val locator = UriLocator("https://example.com/over-limit-content-hash")
+        val contentHash = "h".repeat(SourceIdentityBounds.MAX_CONTENT_HASH_LENGTH + 1)
+
+        val failure = assertThrows(IllegalArgumentException::class.java) {
+            store.save(propositionCiting(ProvenanceEntry(locator = locator, contentHash = contentHash)))
+        }
+
+        assertTrue(
+            failure.message!!.contains("MAX_CONTENT_HASH_LENGTH") &&
+                failure.message!!.contains("${SourceIdentityBounds.MAX_CONTENT_HASH_LENGTH}"),
+            "the refusal must name the limit it enforced: ${failure.message}",
+        )
+        assertEquals(0, store.interactions, "an over-long content hash must never reach the store")
+    }
+
     /**
      * The query-side value object is bounded too. A caller that hands a runaway key or revision to
      * an exact-revision query is refused at the same ceiling the write path uses.
