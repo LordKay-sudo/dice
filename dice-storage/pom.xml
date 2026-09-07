@@ -76,14 +76,10 @@
             <artifactId>slf4j-api</artifactId>
         </dependency>
 
-        <!--
-            https://mvnrepository.com/artifact/org.jetbrains/annotations
-            For Experimental annotation
-        -->
+        <!-- JetBrains annotations for @ApiStatus; the version comes from the root pom -->
         <dependency>
             <groupId>org.jetbrains</groupId>
             <artifactId>annotations</artifactId>
-            <version>26.0.2</version>
             <scope>provided</scope>
         </dependency>
 
