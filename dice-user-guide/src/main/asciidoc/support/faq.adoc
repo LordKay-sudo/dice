@@ -1,0 +1,78 @@
+[[support-faq]]
+=== FAQ
+
+*I called `process(...)` and nothing was saved.*::
+That is correct behaviour. The pipeline returns `PersistablePropositions` and stores nothing until
+you call `persist(propositionRepository, namedEntityDataRepository)` inside your own transaction. If
+you drop the result, the work is discarded silently.
+
+*Why is there no `PropositionQuery.create()`?*::
+Deliberate. Without a required scope, "load everything" would be the shortest thing to write, and in
+a store that accumulates indefinitely that is a production incident. Start from
+`againstContext(...)` or `forContextId(...)`.
+
+*Should I filter on `confidence` or `effectiveConfidence`?*::
+`effectiveConfidence`, almost always. `confidence` is what the extractor thought at extraction time
+and never changes; `effectiveConfidence` folds in decay and is what "do we still believe this?"
+means.
+
+*The same entity appears twice.*::
+Resolution did not match the second mention. Look at the `ResolutionLevel` distribution first: heavy
+`NO_MATCH` with minting on means candidate recall is too narrow. Fix the cheap searchers before
+touching the LLM rungs — see <<how-to-tune-entity-resolution>>. Reclamation can collapse what got
+through.
+
+*Two different entities got merged into one.*::
+More serious, and harder to undo. Check the collector's `match-threshold` and the trace for that
+merge, and check whether a fuzzy or partial-name searcher is recalling too widely. Raise the
+threshold and re-run dry.
+
+*Why did decay not reset after I updated a proposition?*::
+Decay is anchored on `contentRevised`, which moves only when the claim's text changes.
+Status changes, pinning and grounding touch `metadataRevised` instead. This is what stops
+housekeeping from making stale beliefs look fresh.
+
+*My queries and the decay tick disagree about how fast things fade.*::
+`embabel.dice.store.decay.k` configures the tick. `PropositionQuery.decayK` and
+`effectiveConfidence(k)` default to `2.0` independently. Set both, or leave both alone.
+
+*Can I run extraction in parallel?*::
+Yes, with an `ExtractionExecutionStrategy` — but only after verifying your `PropositionExtractor`
+is thread-safe. Resolution stays serial regardless, which is what preserves cross-chunk entity
+identity. See <<features-concurrent-extraction>>.
+
+*Why is resolution serial when extraction is not?*::
+Resolution reads and writes shared entity identity. Running it concurrently is how you get two
+entities for one thing.
+
+*The REST endpoints return 404.*::
+They are opt-in. You need `@Import(DiceRestConfiguration.class)`, `spring-webmvc` on the classpath,
+and the beans the controllers depend on. A missing bean fails at startup rather than 404-ing, so a
+404 usually means the configuration was never imported.
+
+*I enabled API-key security and now everything is 401.*::
+Check the startup log. If no keys were configured, `ApiKeySecurityAutoConfiguration` logs a warning
+and every request is rejected. Also check `path-patterns` matches where your controllers actually
+are.
+
+*Do I need Neo4j?*::
+No. The in-memory backend is the default and needs nothing. Neo4j is for durability, concurrent
+writers and native traversal — see <<how-to-choose-a-backend>>.
+
+*How do I migrate from in-memory to the graph backend?*::
+Read every proposition and entity from the old store, write them to the new one, re-project.
+There is no tool because propositions are the system of record and everything else is derived.
+
+*What should a `ContextId` represent?*::
+Your isolation boundary — usually one per user, tenant, conversation or document collection.
+Contexts do not nest. If you need a hierarchy, encode it in the value and query by prefix at your
+own layer.
+
+*Reclamation deleted something I needed.*::
+It should not have deleted anything: DICE decays rather than deletes, and hard deletion requires
+`embabel.dice.store.decay.prune-stale=true`, which is off by default. Pin propositions that must
+never fade, and always dry-run reclamation first.
+
+*Where do I find out why the system behaves this way?*::
+The design notes under `docs/design/` in the repository. This guide covers use; those cover
+rationale.

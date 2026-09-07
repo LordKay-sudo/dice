@@ -1,0 +1,66 @@
+[[overview-what-is-dice]]
+=== What is DICE?
+
+DICE extends context engineering by insisting that a *domain model* is what gives context its shape,
+and by treating LLM outputs — not just inputs — as things worth structuring.
+
+[quote, Rod Johnson, Context Engineering Needs Domain Understanding]
+____
+Despite their seductive ability to work with natural language, LLMs become safer to use the more we
+add structure to inputs and outputs. DICE helps LLMs converse in the established language of our
+business and applications.
+
+Domain objects are not mere structs. They not only provide typing, but define focused behaviour. In
+an agentic system, behaviour can be exposed to manually authored code and selectively exposed to
+LLMs as tools.
+____
+
+==== Why domain integration matters
+
+[cols="1,3", options="header"]
+|===
+| Benefit | What it buys you
+
+| Structured context
+| Code fills the context window, rather than string concatenation. Less delicate, more repeatable.
+
+| System integration
+| Domain objects are the interface to systems you already run.
+
+| Reuse
+| A domain model captures business understanding once and is shared across agents.
+
+| Persistence
+| Structured query through SQL, Cypher and Prolog — not vector search alone.
+
+| Testability
+| Structure and encapsulation make behaviour assertable.
+
+| Observability
+| Debuggers and tracing tools understand typed objects.
+|===
+
+==== When to reach for DICE
+
+Use DICE when your application needs to *accumulate* knowledge from text over time and then query it
+in more than one shape:
+
+* A chatbot that should remember what a user told it three sessions ago, with a record of where each
+  belief came from and how strongly it is held.
+* A document pipeline that builds a queryable graph of entities and relationships, incrementally,
+  without re-processing what it has already seen.
+* An agent that needs working memory scoped to a conversation, with stale beliefs decaying rather
+  than piling up.
+* Anything that needs to answer "why do you believe that?" with evidence.
+
+Do not reach for DICE when a vector store and a retrieval prompt are enough. The proposition model
+earns its cost when knowledge is *revised* — merged, reinforced, contradicted, superseded — not when
+it is only ever appended.
+
+==== A worked example in production
+
+https://github.com/embabel/impromptu[Impromptu] is a classical-music exploration chatbot that builds
+a knowledge graph from conversation. It exercises most of the surface described in this guide:
+`PropositionPipeline` for extraction, incremental analysis for streaming conversation, an
+`EscalatingEntityResolver` with an LLM-backed candidate searcher, and Spring Boot integration with
+asynchronous processing.

@@ -1,0 +1,46 @@
+[[overview-modules]]
+=== Modules
+
+DICE publishes five consumer-facing artifacts under the `com.embabel.dice` group. There is no
+aggregator starter: pick the modules you need.
+
+[cols="1,2,1", options="header"]
+|===
+| Artifact | What it gives you | Pull it in when
+
+| `dice`
+| The whole domain: the `Proposition` model, the `PropositionStore` and `PropositionRepository`
+  SPIs, the extraction pipeline, revision and conflict detection, entity resolution, the graph,
+  Prolog and memory projectors, graph and discovery queries, incremental analysis, the in-memory and
+  JSON-file stores, tuProlog integration, and the optional REST endpoints.
+| Always. Everything else depends on it.
+
+| `dice-storage`
+| A Drivine/Neo4j implementation of `PropositionRepository`, `ChunkHistoryStore` and `DecayManager`.
+| You want propositions in Neo4j rather than in memory.
+
+| `dice-storage-autoconfigure`
+| Spring Boot auto-configuration: backend selection from `embabel.dice.store.type`, the scheduled
+  decay tick, and the multi-signal duplicate collector.
+| You are on Spring Boot and want beans wired for you. This is the usual entry point.
+
+| `dice-report`
+| Output projectors over propositions: rationale (why a fact is believed, with its evidence),
+  structured reports, and surprising-link discovery.
+| You need human-readable output.
+
+| `dice-ingestion`
+| An ingestion SPI turning artifacts into chunks, with a content-hash ledger so the same source is
+  not extracted twice.
+| You are feeding files or documents in, rather than conversation turns.
+|===
+
+`dice-integration-tests` is test-only: it holds the cross-feature end-to-end harness and is not
+published for consumption.
+
+.Dependency scope
+[NOTE]
+====
+`embabel-agent-api` and `embabel-agent-rag-core` are declared `provided` in `dice`. Your application
+brings the actual embabel-agent version at runtime; DICE only fixes the minimum it compiles against.
+====

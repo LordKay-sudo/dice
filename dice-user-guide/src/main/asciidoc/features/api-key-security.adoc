@@ -1,0 +1,70 @@
+[[features-api-key-security]]
+=== API-key security
+
+*Activation*: `dice.security.api-key.enabled=true`
+
+*Availability*: `dice`. No extra module, no extra infrastructure.
+
+==== When to use it
+
+Use it whenever <<features-web-api>> is exposed beyond your own process. The REST endpoints are
+unauthenticated without it, and the extraction endpoints make LLM calls on demand — an open one is
+both a data-exposure problem and a billing one.
+
+Leave it off when the endpoints are not exposed, or when you already have Spring Security in front
+of them.
+
+==== Impact
+
+* *Latency*: one filter, one set lookup per request.
+* *Cost*: none.
+* *Operational*: keys in configuration are keys in your configuration. See the warning below.
+
+==== How to enable
+
+[source,yaml]
+----
+dice:
+  security:
+    api-key:
+      enabled: true                 # default false
+      keys:
+        - ${DICE_API_KEY}
+      header-name: X-API-Key        # default
+      path-patterns:
+        - /api/v1/**                # default
+----
+
+With `enabled: true`, `ApiKeySecurityAutoConfiguration` registers an `InMemoryApiKeyAuthenticator`
+over the configured keys and a servlet filter over the configured path patterns.
+
+If you enable it and configure no keys, the authenticator logs a warning at startup — that message
+means every request is being rejected.
+
+==== Use your own authenticator in production
+
+The in-memory list is for development. Provide your own `ApiKeyAuthenticator` bean and the
+auto-configuration steps aside, because it is `@ConditionalOnMissingBean`:
+
+[source,java]
+----
+@Bean
+ApiKeyAuthenticator apiKeyAuthenticator(SecretStore secrets) {
+    return request -> secrets.isValid(request.getHeader("X-API-Key"));
+}
+----
+
+That is where key rotation, per-key scoping and revocation belong.
+
+[WARNING]
+====
+Keys listed under `dice.security.api-key.keys` are plain configuration values. Inject them from
+environment variables or a secret manager — never commit them, and never let them reach a log line.
+====
+
+==== Scope of protection
+
+The filter protects `path-patterns`, which defaults to `/api/v1/**`. Anything outside that pattern —
+actuator endpoints, your own controllers, static resources — is untouched. If you mount DICE's
+controllers under a different prefix, update the patterns to match, or you will have enabled
+security that guards nothing.

@@ -1,0 +1,101 @@
+[[how-to-extract-from-documents]]
+=== Extract knowledge from documents
+
+*Prerequisites*: `dice`, `dice-ingestion`, a configured LLM, and a `PropositionRepository`.
+
+==== Ingest, then extract
+
+`dice-ingestion` turns artifacts into chunks and keeps a ledger so the same source is not extracted
+twice.
+
+[cols="1,3", options="header"]
+|===
+| Type | Role
+
+| `IngestionHandler`
+| Turns one artifact into chunks. `TextIngestionHandler` ships; implement the SPI for other formats.
+
+| `IngestedArtifact`
+| One thing that was ingested, with its content hash.
+
+| `IngestionBatch`
+| A set of artifacts ingested together.
+
+| `IngestionLedger`
+| The content-hash record that makes re-ingestion a no-op.
+
+| `IngestionResult`
+| What came out: the chunks, and what was skipped as already seen.
+|===
+
+The ledger keys on content, not on filename or path. Renaming a file does not cause re-extraction;
+editing one does.
+
+==== Run the chunks through the pipeline
+
+[source,java]
+----
+var result = ingestionHandler.handle(artifact);
+
+var context = new SourceAnalysisContext(dataDictionary, resolver, contextId)
+        .withSourceLocator(sourceLocator)   // so provenance can point back at the file
+        .withMintNewEntities(true);
+
+var propositions = pipeline.process(result.getChunks(), context);
+----
+
+`process` handles cross-chunk entity identity for you: when minting is enabled it wraps your
+resolver so an entity minted in chunk 2 is recognised in chunk 7.
+
+==== Persist within your own transaction
+
+The pipeline stores nothing. That is deliberate — DICE never decides your transaction boundary.
+
+[source,java]
+----
+@Transactional
+public void ingest(Path file) {
+    var result = ingestionHandler.handle(artifactFor(file));
+    var propositions = pipeline.process(result.getChunks(), context);
+    propositions.persist(propositionRepository, namedEntityDataRepository);
+}
+----
+
+If you forget `persist`, nothing is saved and nothing complains.
+
+==== Only process what changed
+
+For a corpus that grows, use incremental analysis rather than reprocessing. `ChunkHistoryStore`
+records which chunks have been analysed; `AbstractIncrementalAnalyzer` and its subclasses skip
+those. `dice-storage-autoconfigure` provides a `ChunkHistoryStore` bean for whichever backend is
+selected.
+
+==== Add grounding and provenance
+
+Grounding links a claim to the chunk it came from and is created automatically. Provenance is
+richer: a `ProvenanceEntry` plus a `SourceLocator` records how to get back to the original material,
+which is what `RationaleProjector` uses to explain a belief.
+
+[source,java]
+----
+var context = baseContext.withSourceLocator(sourceLocator);
+----
+
+==== Filter mentions before resolving
+
+Document text carries far more noise than conversation does — headers, boilerplate, citations. A
+`MentionFilter` drops weak mentions before the expensive resolution step:
+
+[source,java]
+----
+pipeline = pipeline.withMentionFilter(
+        new ObservableMentionFilter(new SchemaValidatedMentionFilter(dataDictionary)));
+----
+
+Wrapping in `ObservableMentionFilter` while you tune tells you what is being dropped.
+
+==== Speed it up
+
+Extraction is the slow stage and is stateless per chunk, so it can be dispatched concurrently.
+Resolution stays serial regardless. See <<features-concurrent-extraction>> — including the
+thread-safety condition you must verify before turning it on.

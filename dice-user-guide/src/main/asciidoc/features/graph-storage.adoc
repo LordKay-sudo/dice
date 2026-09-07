@@ -1,0 +1,101 @@
+[[features-graph-storage]]
+=== Graph-backed storage
+
+*Activation*: `embabel.dice.store.type=graph`
+
+*Availability*: `dice-storage` and `dice-storage-autoconfigure`, from DICE {dice-version}. Costs a
+Neo4j instance.
+
+==== When to use it
+
+Use it in production, and whenever you need any of: durability across restarts, more than one
+process writing, native graph traversal, or decay applied in the database rather than in your heap.
+
+Leave it off for development, tests and single-process applications. The in-memory backend is the
+default precisely because most of what you do while building DICE into an application does not need
+Neo4j.
+
+==== Impact
+
+* *Infrastructure*: a Neo4j instance, reached through Drivine (`drivine4j-spring-boot-starter`).
+* *Latency*: network round trips replace map lookups. Traversals get much faster; single-id lookups
+  get slower.
+* *Memory*: propositions no longer live in your heap.
+* *LLM calls*: unchanged.
+* *Startup*: schema catalogues create constraints and the vector index on first run.
+
+==== How to enable
+
+[source,yaml]
+----
+embabel:
+  dice:
+    store:
+      type: graph
+----
+
+Plus Drivine's Neo4j connection configuration.
+
+==== What you get
+
+With `type=graph`, `DiceStorageAutoConfiguration` provides:
+
+[cols="1,2", options="header"]
+|===
+| Bean | Implementation
+
+| `PropositionRepository`
+| `DrivinePropositionRepository` — requires an `Ai` bean for embeddings
+
+| `ChunkHistoryStore`
+| `DrivineChunkHistoryStore`
+
+| `DecayManager`
+| `GraphDecayManager` — decay executed in the database
+
+| `ProjectionRecordStore`
+| `DrivineProjectionRecordStore` — edge lineage
+
+| `CollectorRecordStore`
+| `DrivineCollectorRecordStore` — reclamation audit trail
+
+| `SchemaCatalog` beans
+| Proposition constraints, lineage-record schema, and the vector index spec
+|===
+
+Every one is `@ConditionalOnMissingBean`, so your own bean always wins.
+
+==== The graph model
+
+`dice-storage` maps propositions onto typed nodes: `PropositionNode`, `SourceNode`,
+`ProcessedChunkNode`, `Mention` and `DerivedFrom`, with `PropositionView` and
+`PropositionWithProvenanceView` as the read projections. `PropositionGraphMapper` handles the
+mapping; `GraphProjectionCypher` holds the traversal queries.
+
+==== Example
+
+Nothing in your code changes. This is the same call against either backend:
+
+[source,java]
+----
+var confident = propositionRepository.query(
+        PropositionQuery.againstContext(contextId).withMinEffectiveConfidence(0.7));
+----
+
+What changes is that on the graph backend the repository also implements `GraphQueryCapable`, so
+native traversal is available:
+
+[source,java]
+----
+if (propositionRepository instanceof GraphQueryCapable g) {
+    var neighbourhood = g.neighborhood(entityId, 2);
+}
+----
+
+.Kotlin version
+[NOTE]
+====
+`dice-storage` and `dice-storage-autoconfigure` build with Kotlin 2.2 — they need the 2.2 compiler
+for Drivine's KSP-generated `where { }` DSL, which uses context parameters. The `dice` module builds
+with Kotlin 2.1.10. This matters only if you are building DICE, not if you are consuming it.
+====

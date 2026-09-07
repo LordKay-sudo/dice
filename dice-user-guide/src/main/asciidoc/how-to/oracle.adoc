@@ -1,0 +1,55 @@
+[[how-to-oracle]]
+=== Ask questions in natural language
+
+*Prerequisites*: a populated `PropositionRepository` and a configured LLM.
+
+`Oracle` answers a natural-language question from what DICE knows.
+
+[source,java]
+----
+Answer answer = oracle.ask("What does the user think about the early recordings?");
+
+// or with the full question type
+Answer answer = oracle.ask(new Question(text));
+----
+
+Two implementations ship:
+
+[cols="1,3", options="header"]
+|===
+| Implementation | How it answers
+
+| `LlmOracle`
+| Retrieves relevant propositions, then asks an LLM to answer from them. The general case.
+
+| `ToolOracle`
+| Exposes DICE query operations to the LLM as tools, so it can decide what to look up. Better for
+  questions that need several lookups or a traversal.
+|===
+
+`PrologTools` makes the Prolog projection available to the Oracle as a tool, so a question needing
+inference — rather than retrieval — can be answered by running rules. See
+<<features-prolog-inference>>.
+
+==== Why the Oracle is not a chatbot
+
+The Oracle answers from stored propositions, and nothing else. That is the point: every answer is
+traceable to claims that carry confidence, grounding and provenance. If it does not know, the honest
+answer is that it does not know — which is only useful because the propositions behind it are
+auditable.
+
+To show your work, pair the Oracle with `RationaleProjector` from `dice-report`:
+
+[source,java]
+----
+RationaleArtifact why = rationaleProjector.rationale(proposition);
+----
+
+`LlmRationaleProjector` produces the narrative form; `rationale(PropositionGroup)` explains a set of
+claims together rather than one at a time.
+
+==== Scope the question
+
+The Oracle answers within a `ContextId` like everything else. Asking a question against the wrong
+context is the most common way to get a confidently wrong answer — one user's beliefs are not
+another's.

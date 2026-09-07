@@ -1,0 +1,33 @@
+= DICE User Guide
+:doctype: book
+:toc: left
+:toclevels: 4
+:numbered:
+:icons: font
+:hide-uri-scheme:
+:docinfo: shared
+:imagesdir: ./images
+
+ifndef::imagesdir[]
+:imagesdir: images
+endif::[]
+
+image:tower.png[Embabel,300]
+
+ifdef::backend-html5[]
+
+DICE Release: {dice-version}
+
+Built against embabel-agent: {embabel-agent-version}
+
+(C) 2024-2026 Embabel Pty, Ltd
+
+endif::backend-html5[]
+
+//==========================================================================
+
+include::authors.adoc[]
+
+include::user-guide.adoc[]
+
+//==========================================================================

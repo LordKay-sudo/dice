@@ -1,0 +1,135 @@
+[[concepts-context-and-schema]]
+=== Context and schema
+
+Two things bound what DICE extracts and what it will return: the `ContextId` that scopes a
+proposition, and the schema that tells extraction what the domain looks like.
+
+==== ContextId
+
+Every proposition belongs to exactly one `ContextId`. It is the primary scope, and the starting
+point of every query:
+
+[source,java]
+----
+var query = PropositionQuery.againstContext(new ContextId("user:42"));
+----
+
+There is no `PropositionQuery.create()`. That is a design decision, not an omission: without a
+scope, "load everything" would be the shortest thing to write, and in a store that accumulates
+indefinitely that is a production incident waiting to happen.
+
+`ContextId` is a Kotlin value class, so it costs nothing at runtime. Java callers reach the string
+through `getContextIdValue()`, on both `Proposition` and `PropositionQuery`.
+
+What a context should represent is your decision. Common choices: one per user, one per tenant, one
+per conversation, one per document collection. Contexts do not nest; if you need a hierarchy, encode
+it in the value and query by prefix at your own layer.
+
+==== SourceAnalysisContext
+
+`SourceAnalysisContext` is the per-run configuration handed to the pipeline. It carries the schema,
+the resolver, the `ContextId`, and everything else extraction needs to know:
+
+[cols="1,3", options="header"]
+|===
+| Field | Purpose
+
+| `schema`
+| The `DataDictionary` describing your domain's entity types.
+
+| `entityResolver`
+| How mentions become entities. See <<concepts-entity-resolution>>.
+
+| `contextId`
+| The scope everything extracted lands in.
+
+| `knownEntities`
+| Entities the run should already recognise — `KnownEntity.asCurrentUser(user)` is the common case.
+
+| `relations`
+| Declared predicates, used by extraction and by relation-based graph projection.
+
+| `promptVariables`
+| Extra values available to the extraction template.
+
+| `sourceLocator`
+| How to get back to the source material, for provenance.
+
+| `perspective`
+| Whose point of view the text is written from.
+
+| `mintNewEntities`
+| Whether unresolved mentions may create entities. Off by default.
+
+| `mintedEntityProperties`
+| Properties stamped onto anything minted.
+|===
+
+It is a data class with `with*` builders, so a base context can be specialised per run:
+
+[source,java]
+----
+var context = new SourceAnalysisContext(dataDictionary, resolver, contextId)
+        .withKnownEntities(KnownEntity.asCurrentUser(user))
+        .withRelations(relations)
+        .withMintNewEntities(true)
+        .withSourceLocator(sourceLocator);
+----
+
+==== The DataDictionary and SchemaAdherence
+
+The `DataDictionary` is your domain's schema: the entity types extraction should look for, and the
+relationship metadata that names the predicates it may use. `SchemaRegistry` holds them.
+
+`SchemaAdherence` decides how strictly extraction obeys it. Two independent switches:
+
+[cols="1,1,1,2", options="header"]
+|===
+| Constant | `entities` | `predicates` | Behaviour
+
+| `SchemaAdherence.STRICT`
+| `true`
+| `true`
+| Only schema entity types, only schema predicates. Nothing outside the model gets in.
+
+| `SchemaAdherence.DEFAULT`
+| `true`
+| `false`
+| Entity types locked to the schema; any predicate allowed. The usual choice.
+
+| `SchemaAdherence.RELAXED`
+| `false`
+| `false`
+| Schema types preferred but not required, on both axes. Use when you are still discovering the
+  domain.
+|===
+
+Set it on the extractor:
+
+[source,java]
+----
+LlmPropositionExtractor.withLlm(llmOptions)
+        .withAi(ai)
+        .withPropositionRepository(repository)
+        .withSchemaAdherence(SchemaAdherence.STRICT);
+----
+
+Strictness is the main lever on extraction noise. Start at `DEFAULT`; move to `STRICT` when you
+trust the schema and want the extractor to stop inventing predicates; move to `RELAXED` only while
+exploring.
+
+==== Relations
+
+`Relations` declares the predicates that may hold between entities. Extraction uses them to phrase
+claims consistently, and `RelationBasedGraphProjector` uses them to decide which edges to create.
+Declaring relations is what turns free-text claims into a graph you can traverse rather than a bag
+of sentences.
+
+.Try it now
+[source,java]
+----
+var strict = new SourceAnalysisContext(dataDictionary, resolver, new ContextId("strict-test"));
+// ... run the same chunk through an extractor built with STRICT and with RELAXED,
+// and compare how many propositions and mentions survive.
+----
+The gap between the two is the size of the noise your schema is currently suppressing.

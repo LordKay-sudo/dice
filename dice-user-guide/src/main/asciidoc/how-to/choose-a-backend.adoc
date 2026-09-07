@@ -1,0 +1,90 @@
+[[how-to-choose-a-backend]]
+=== Choose a storage backend
+
+*Prerequisites*: `dice-storage-autoconfigure` on the classpath.
+
+Backend selection is a property. The code you write against `PropositionRepository` does not change.
+
+[cols="1,1,3", options="header"]
+|===
+| Backend | `embabel.dice.store.type` | Choose it when
+
+| In-memory
+| `in-memory` (default)
+| Development, tests, single-process applications, and anything where losing the store on restart is
+  acceptable. Needs an `Ai` bean for embeddings.
+
+| JSON file
+| — (wire `JsonFilePropositionRepository` yourself)
+| You want survival across restarts with no infrastructure at all. Not for concurrent writers.
+
+| Graph (Drivine/Neo4j)
+| `graph`
+| Production. Durable, concurrent, with native graph traversal, a vector index, and decay applied in
+  the database.
+|===
+
+==== Switching to the graph backend
+
+[source,yaml]
+----
+embabel:
+  dice:
+    store:
+      type: graph
+----
+
+Plus Drivine's own Neo4j connection configuration. Nothing else in your application changes: the
+auto-configuration swaps `PropositionRepository`, `ChunkHistoryStore`, `DecayManager`,
+`ProjectionRecordStore` and `CollectorRecordStore` for their Drivine equivalents, and registers the
+schema catalogues that create the constraints and the vector index.
+
+See <<features-graph-storage>> for the full activation detail.
+
+==== What changes when you switch
+
+[cols="1,1,1", options="header"]
+|===
+| | In-memory | Graph
+
+| Survives restart
+| No
+| Yes
+
+| Concurrent writers
+| Single process
+| Yes
+
+| Vector search
+| Through the `Ai` embedding service
+| Native Neo4j vector index
+
+| Graph traversal
+| Default implementations over the primitives
+| Native Cypher, via `GraphQueryCapable`
+
+| Decay tick
+| In-process, over the whole store
+| Executed in the database
+
+| Extra infrastructure
+| None
+| A Neo4j instance
+|===
+
+==== Overriding the choice entirely
+
+Every auto-configured bean is `@ConditionalOnMissingBean`. Define your own `PropositionRepository`
+and the auto-configuration steps aside — which is also how you implement `PropositionStore` against
+a backend DICE does not ship.
+
+Implement only the capabilities you genuinely support. The default implementations on
+`VectorSearchCapable`, `GraphTraversalCapable`, `GraphQueryCapable` and `TemporalQueryCapable`
+express each operation over the base primitives, so an unimplemented capability degrades in
+performance rather than breaking.
+
+==== Migrating between backends
+
+There is no shipped migration tool. Propositions are the system of record and everything else is a
+projection, so a migration is: read every proposition and entity from the old store, write them to
+the new one, then re-project. Reconciliation is idempotent, so re-projecting is safe to repeat.

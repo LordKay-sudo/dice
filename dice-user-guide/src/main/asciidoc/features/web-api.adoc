@@ -1,0 +1,134 @@
+[[features-web-api]]
+=== Web API
+
+*Activation*: `@Import(DiceRestConfiguration.class)`, plus the beans the controllers need
+(`PropositionPipeline`, `PropositionStore`, and the rest) and `spring-webmvc` on the classpath.
+
+*Availability*: `dice`. No extra module, no extra infrastructure.
+
+==== When to use it
+
+Use it when something outside the JVM needs to reach DICE — another service, a front end, a tool
+process.
+
+Leave it off when DICE is a library inside one application. It is off by default because a knowledge
+store is not something to expose accidentally.
+
+==== Impact
+
+* *Surface*: three controllers under `/api/v1`.
+* *Security*: none by default. Read <<features-api-key-security>> before exposing this anywhere.
+* *Latency and cost*: the extraction endpoints make LLM calls, synchronously.
+
+==== How to enable
+
+[source,java]
+----
+@Configuration
+@Import(DiceRestConfiguration.class)
+public class MyAppConfiguration { }
+----
+
+`DiceRestConfiguration` imports the controllers. They are ordinary `@RestController` beans, and each
+needs its collaborators present — importing the configuration without the beans behind it will fail
+at startup rather than silently serve nothing.
+
+==== The endpoints
+
+.Extraction — `PropositionPipelineController`
+[cols="1,2,3", options="header"]
+|===
+| Method | Path | What it does
+
+| `POST`
+| `/extract`
+| Runs text through the pipeline and returns an `ExtractResponse`.
+
+| `POST`
+| `/extract/file`
+| Same, from a `multipart/form-data` upload. Returns a `FileExtractResponse` with per-chunk detail.
+|===
+
+.Memory — `MemoryController`, under `/api/v1/contexts/{contextId}/memory`
+[cols="1,2,3", options="header"]
+|===
+| Method | Path | What it does
+
+| `GET`
+| `/`
+| Lists propositions for the context, filterable by status and confidence.
+
+| `POST`
+| `/search`
+| Semantic search within the context.
+
+| `GET`
+| `/entity/{entityType}/{entityId}`
+| Everything the context knows about one entity.
+
+| `POST`
+| `/`
+| Creates a proposition directly, bypassing extraction.
+
+| `GET`
+| `/{propositionId}`
+| Fetches one proposition.
+
+| `DELETE`
+| `/{propositionId}`
+| Deletes one proposition.
+|===
+
+.Discovery — `DiscoveryController`, under `/api/v1/contexts/{contextId}/discovery`
+[cols="1,2,3", options="header"]
+|===
+| Method | Path | What it does
+
+| `POST`
+| `/query`
+| Runs a discovery query.
+
+| `GET`
+| `/path`
+| Finds paths between entities.
+
+| `GET`
+| `/why/{propositionId}`
+| Explains why a proposition is believed — its evidence and lineage.
+
+| `GET`
+| `/projection-health`
+| Reports what is stale in the projection.
+
+| `POST`
+| `/collector/dry-run`
+| Reports what reclamation would do, without doing it.
+|===
+
+==== DTOs, not domain objects
+
+The controllers speak in DTOs — `PropositionDto`, `EntityMentionDto`, `ProvenanceEntryDto`,
+`ExtractRequest`, `MemorySearchRequest` and the rest — rather than serialising domain types. The
+wire format is a contract you can evolve separately from the model, and internal fields do not leak.
+
+`ExtractOptions` carries per-request extraction settings, including a `SchemaAdherenceDto` mapping
+to <<concepts-context-and-schema>>'s three constants.
+
+==== Example
+
+[source,bash]
+----
+curl -X POST http://localhost:8080/api/v1/extract \
+  -H 'Content-Type: application/json' \
+  -d '{
+        "text": "Ada Lovelace worked with Charles Babbage.",
+        "contextId": "demo",
+        "options": { "schemaAdherence": "DEFAULT" }
+      }'
+----
+
+[WARNING]
+====
+As shown, that endpoint is unauthenticated and makes LLM calls on demand. Do not expose it without
+<<features-api-key-security>> or your own security configuration.
+====

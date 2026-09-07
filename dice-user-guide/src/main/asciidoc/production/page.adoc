@@ -1,0 +1,132 @@
+[[production]]
+== Running in production
+:sectids:
+:sectanchors:
+
+What changes when this stops being a quickstart.
+
+[[production-backend]]
+=== Move off the in-memory store
+
+The in-memory backend loses everything on restart and assumes one writer. Switch to the graph
+backend before you have data you care about — see <<how-to-choose-a-backend>> and
+<<features-graph-storage>>.
+
+There is no migration tool, and none is needed for a small store: propositions are the system of
+record, so a migration is read-all, write-all, re-project. Reconciliation is idempotent, so
+re-projection is safe to repeat and safe to interrupt.
+
+[[production-decay]]
+=== Choose decay settings deliberately
+
+The defaults — hourly ticks, `k=2.0`, no pruning — are a reasonable start and a poor finish.
+
+* *Interval*: hourly is fine for a store measured in thousands. Lengthen it if the tick's cost shows
+  up in your metrics.
+* *`k`*: set it from how fast your domain's facts actually go stale. Use `effectiveConfidenceAt` on
+  real propositions to see what a value means before committing to it.
+* *Query `decayK`*: the property configures the tick, not your queries. If you change one, change
+  both, or the two will disagree about how fast beliefs fade.
+* *`prune-stale`*: leave it `false` unless you have decided that reclaiming rows beats being able to
+  explain why a belief was dropped.
+
+[[production-concurrency]]
+=== Concurrency
+
+Extraction is the parallelisable stage and resolution is not — that is a property of the design, not
+a limitation to work around. Before enabling a concurrent `ExtractionExecutionStrategy`, verify your
+`PropositionExtractor` is thread-safe. See <<features-concurrent-extraction>>.
+
+Persistence is yours to bound. The pipeline returns unsaved results and never opens a transaction,
+so `persist(...)` runs inside whatever scope you put it in. On the graph backend, that is the scope
+Drivine's transaction management sees.
+
+[[production-llm-cost]]
+=== LLM cost
+
+DICE makes LLM calls in five places. Four are optional:
+
+[cols="1,1,3", options="header"]
+|===
+| Call site | Optional | How to reduce it
+
+| Extraction
+| No
+| Chunk larger; use `SchemaAdherence.STRICT` so less noise is extracted and later reclaimed.
+
+| Revision
+| Yes
+| Only enable it where restatement actually happens — conversation, not one-shot documents.
+
+| Entity resolution
+| Yes
+| The escalating resolver only reaches an LLM at the top two rungs. Fix candidate recall and most
+  resolutions become free. See <<how-to-tune-entity-resolution>>.
+
+| Consolidation passes
+| Yes
+| Threshold-gated by `DefaultDreamLoopOrchestrator`, so a quiet context costs nothing. Tune the
+  thresholds, not the schedule.
+
+| Reports and rationale
+| Yes
+| Generate on demand rather than eagerly.
+|===
+
+The multi-signal collector makes *no* LLM calls, which is why tuning duplicates there is cheaper
+than tuning them at resolution.
+
+[[production-observability]]
+=== Observability
+
+Instrument these four:
+
+. *Resolution levels.* The `ResolutionLevel` distribution tells you whether resolution is cheap and
+  correct. A rising `LLM_BAKEOFF` rate is a cost problem; a rising `NO_MATCH` rate with minting on is
+  a duplication problem.
+. *Gate rejections.* Wrap gates in `ObservableGate` and filters in `ObservableMentionFilter`. A
+  mis-tuned gate fails silently, and silence looks like success.
+. *Projection health.* `projectionHealth(contextId)` reports what is stale — the signal that
+  reconciliation is due.
+. *Collector traces.* Every live run is recorded. Set `detail-retention-days` to something you can
+  actually afford to store, and read a trace before you trust a merge.
+
+Wire `EventEmittingPropositionRepository` and `EventEmittingProjector` if you want to push these into
+your own telemetry. `PropositionPersisted` is the canonical durable signal — pipeline candidate
+events are pre-persistence and do not mean anything was written.
+
+[[production-hygiene]]
+=== Schedule hygiene
+
+Three passes, three cadences. None of them is wired to run automatically except the decay tick:
+
+* *Decay tick* — automatic, hourly by default.
+* *Reclamation* — run it dry, read the trace, then run it live. Weekly is a reasonable starting
+  cadence for a busy store.
+* *Consolidation* — the dream loop is threshold-gated, so scheduling it often is cheap. Overnight,
+  or per-session for conversational contexts.
+
+Pin anything that must never fade, and pin sparingly: every pin is a permanent claim on retrieval.
+
+[[production-security]]
+=== Security
+
+The REST endpoints are opt-in and unauthenticated by default. If you import
+`DiceRestConfiguration`, enable <<features-api-key-security>> or put your own security in front of
+it — the extraction endpoints make LLM calls on demand, so an open one is a billing exposure as well
+as a data one.
+
+Supply your own `ApiKeyAuthenticator` in production. The in-memory key list is for development, and
+keys in configuration files are keys in your configuration files.
+
+Propositions carry what users told you. `ContextId` is the isolation boundary, and it is only as
+good as the discipline of always scoping queries by it — which is why `PropositionQuery` has no
+unscoped factory.
+
+[[production-backup]]
+=== Backup
+
+Back up the propositions and the entities. Everything else — the graph, the Prolog fact base, memory
+projections, reports — is derived and rebuildable, and reconciliation is idempotent.
+
+Restore is therefore: restore the store, re-project, verify with `projectionHealth`.

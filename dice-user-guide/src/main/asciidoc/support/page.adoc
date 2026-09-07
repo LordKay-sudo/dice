@@ -1,0 +1,8 @@
+[[support]]
+== Support
+:sectids:
+:sectanchors:
+
+include::compatibility.adoc[]
+
+include::faq.adoc[]

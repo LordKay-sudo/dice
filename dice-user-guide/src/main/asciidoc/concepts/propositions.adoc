@@ -1,0 +1,125 @@
+[[concepts-propositions]]
+=== Propositions
+
+A `Proposition` is one claim, written in natural language, that DICE believes to some degree.
+Everything else in DICE is derived from propositions, which means a proposition is the only thing
+you must get right.
+
+==== What a proposition carries
+
+[cols="1,3", options="header"]
+|===
+| Field | Meaning
+
+| `text`
+| The claim itself, in natural language. This is the payload.
+
+| `contextId`
+| The scope it belongs to. See <<concepts-context-and-schema>>.
+
+| `confidence`
+| What the extractor assigned when the claim was made. Never changes on its own.
+
+| `decay`
+| A 0–1 erosion factor applied as the claim ages.
+
+| `status`
+| `ACTIVE` and its siblings — see below.
+
+| `pinned`
+| A pinned proposition is exempt from decay-driven reclamation.
+
+| `level`
+| 0 for a directly extracted claim; higher for abstractions built from other propositions.
+
+| `reinforceCount`
+| How many times independent evidence has restated this claim.
+
+| `mentions`
+| The entity mentions in the text, resolved or not.
+
+| `sourceIds` / grounding
+| The chunks this claim came from.
+
+| `provenanceEntries`
+| Richer evidence links, each locatable through a `SourceLocator`.
+
+| `temporal`
+| Optional validity window, for claims that were true only for a period.
+
+| `created`, `contentRevised`, `metadataRevised`, `lastAccessed`
+| Four separate clocks. The distinction matters — see below.
+|===
+
+==== Effective confidence is the number you use
+
+`confidence` is a historical fact: it is what the LLM thought at extraction time. It is not what you
+should rank or filter on.
+
+[source,java]
+----
+double now   = proposition.effectiveConfidence();          // decay applied, k = 2.0
+double later = proposition.effectiveConfidenceAt(instant); // as of some other time
+----
+
+`PropositionQuery` exposes both: `withMinConfidence(...)` filters the raw number, and
+`withMinEffectiveConfidence(...)` filters the decayed one. Reach for the effective form unless you
+have a specific reason not to.
+
+The decay rate multiplier `k` defaults to `2.0` and is configurable per query and, for the scheduled
+tick, through `embabel.dice.store.decay.k`.
+
+==== The four clocks
+
+`contentRevised` is the *decay anchor*. It moves only when the claim itself changes.
+
+Administrative changes — flipping status, pinning, attaching grounding — touch `metadataRevised` and
+leave `contentRevised` alone. This is what stops housekeeping from silently making stale beliefs look
+fresh. `lastAccessed` is separate again, and `touchAccessed(...)` on the store updates it in bulk
+without disturbing either revision clock.
+
+==== Status
+
+`PropositionStatus` tracks a claim's standing. `ACTIVE` is the normal case; the other states record
+that a claim has been superseded, contradicted, or has decayed past usefulness. Transitions are
+governed by a `StatusTransitionPolicy`, which is an SPI you can replace.
+
+DICE decays rather than deletes. A claim that stops being believed keeps its history, its evidence,
+and its links, so "we used to think X, then Y arrived" remains answerable. Hard deletion is a
+separate, opt-in sweep — see <<concepts-knowledge-hygiene>>.
+
+==== Evidence accumulation
+
+When the same claim arrives again from a different source, DICE does not store a duplicate. It folds
+the new evidence in:
+
+[source,java]
+----
+Proposition merged = existing.absorbEvidence(incoming);
+----
+
+`absorbEvidence` combines confidence, grounding, provenance and `reinforceCount`. The inverse,
+`withoutFoldedEvidence(...)`, exists so a retraction can be applied without losing the rest.
+
+==== Immutability
+
+`Proposition` is a Kotlin data class and every mutator returns a copy: `withText`, `withStatus`,
+`withConfidence`, `withPinned`, `withGrounding`, `withTemporal`, `withProvenance`,
+`withResolvedMentions`, `withMetadataValue`. Nothing mutates in place, so a proposition can be shared
+across threads without ceremony.
+
+Java callers get a `Proposition.create(...)` factory and `getContextIdValue()` for the value-class
+`ContextId`.
+
+.Try it now
+[source,java]
+----
+var p = propositionRepository.query(
+        PropositionQuery.againstContext(new ContextId("quickstart"))).get(0);
+
+System.out.printf("raw=%.2f effective=%.2f decay=%.2f reinforced=%d status=%s%n",
+        p.getConfidence(), p.effectiveConfidence(), p.getDecay(),
+        p.getReinforceCount(), p.getStatus());
+----
+Expect raw and effective confidence to be close on a freshly extracted claim, and to diverge as the
+decay tick runs against it.

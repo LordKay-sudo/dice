@@ -1,0 +1,10 @@
+[[reference]]
+== Reference
+:sectids:
+:sectanchors:
+
+include::configuration-properties.adoc[]
+
+include::package-structure.adoc[]
+
+include::extension-points.adoc[]

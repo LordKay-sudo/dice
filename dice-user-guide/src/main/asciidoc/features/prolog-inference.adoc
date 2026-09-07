@@ -1,0 +1,82 @@
+[[features-prolog-inference]]
+=== Prolog inference
+
+*Activation*: a `PrologProjector` bean. Nothing is wired by default.
+
+*Availability*: `dice`, via tuProlog (2p-kt). No extra infrastructure — the engine is a pure Kotlin
+library running in your JVM.
+
+[WARNING]
+====
+Experimental. The API may change without the usual deprecation cycle.
+====
+
+==== When to use it
+
+Use it when the questions you need answered are *derived* rather than *stored*: transitive closure,
+mutual exclusion, "who else is affected if this is true", rules a domain expert can read and check.
+
+Leave it off when retrieval answers your questions. A vector search and a graph traversal cover most
+of what applications ask, and neither requires you to maintain a rule base.
+
+==== Impact
+
+* *LLM calls*: none. Inference is symbolic.
+* *Memory*: the fact base is materialised in the JVM.
+* *Latency*: query time depends on your rules, not on the store. An unbounded recursive rule will
+  hang.
+* *Maintenance*: rules are code, and they need tests like any other code.
+
+==== How to enable
+
+Provide a projector, project, then query:
+
+[source,java]
+----
+@Bean
+PrologProjector prologProjector(/* collaborators */) {
+    return new DefaultPrologProjector(/* ... */);
+}
+----
+
+[source,java]
+----
+// Propositions -> projected relationships -> Prolog facts.
+PrologProjectionResult result = prologProjector.projectAll(relationships);
+
+// Load the facts and your rules into an engine.
+PrologEngine engine = PrologEngine.of(result.getFacts(), rules);
+----
+
+==== Querying
+
+[source,java]
+----
+boolean holds        = engine.query("collaborated(ada, babbage)");
+List<QueryResult> rs = engine.queryAll("collaborated(ada, X)");
+QueryResult first    = engine.queryFirst("collaborated(ada, X)");
+List<String> names   = engine.findAll("collaborated(ada, X)", "X");
+----
+
+`query` is the yes/no form. `queryAll` returns every solution, `queryFirst` the first, and `findAll`
+extracts the bindings of one variable as strings — usually what you want when the answer is a list
+of entity ids.
+
+==== Through the Oracle
+
+`PrologTools` exposes the fact base to `ToolOracle` as a tool, so a natural-language question that
+needs inference rather than retrieval can be answered by running rules. See <<how-to-oracle>>.
+
+==== What a projected fact looks like
+
+`PrologProjector` extends the generic `Projector` and produces `PrologFact` values, one per
+projected relationship. The projection is derived — if the propositions change, re-project rather
+than editing facts.
+
+`PrologTypes` holds the type mapping between DICE's model and Prolog terms.
+
+==== The tuProlog pin
+
+DICE pins tuProlog to 1.0.4. The 1.1.x series is built with Kotlin 2.2.x and is binary-incompatible
+with the `dice` module's Kotlin 2.1.10. This constrains DICE's build, not yours — but if you bring
+your own tuProlog, match the pinned version.

@@ -1,0 +1,126 @@
+[[concepts-storage-and-projections]]
+=== Storage and projections
+
+Propositions are stored once and viewed many ways. This page covers the port they are stored
+through, and the views derived from them.
+
+==== The store SPI
+
+`PropositionStore` is the base port and is deliberately small: save, find by id, find by entity, find
+by status, find by grounding, find by context, delete, count — plus one composable `query`.
+
+`PropositionRepository` extends it with *optional capability interfaces*. A backend implements only
+what it genuinely supports:
+
+[cols="1,3", options="header"]
+|===
+| Capability | What it adds
+
+| `VectorSearchCapable`
+| Similarity search over proposition embeddings.
+
+| `GraphTraversalCapable`
+| Traversal over the proposition/entity graph.
+
+| `GraphQueryCapable`
+| Native neighbourhood, path and lineage queries, plus the `honorsAuthorityFilter` opt-in that lets
+  the portable graph facade push authority-filtered traversals down to the backend.
+
+| `TemporalQueryCapable`
+| Queries over validity windows.
+|===
+
+Each capability interface carries default implementations expressed over the base primitives, so a
+backend that implements nothing extra still behaves correctly — just more slowly.
+
+==== The shipped backends
+
+[cols="1,2,2", options="header"]
+|===
+| Backend | Where it lives | Use it for
+
+| `InMemoryPropositionRepository`
+| `dice`
+| Development, tests, and single-process applications. Needs an `EmbeddingService` for vector search.
+
+| `JsonFilePropositionRepository`
+| `dice`
+| A store that survives a restart without any infrastructure.
+
+| `Neo4jRagPropositionRepository`
+| `dice`
+| Propositions inside an embabel-agent RAG-backed Neo4j.
+
+| `DrivinePropositionRepository`
+| `dice-storage`
+| Production Neo4j through Drivine, with the vector index, decay in the database, and lineage.
+|===
+
+Selection is a property, not a code change — see <<features-graph-storage>>.
+
+==== Composable queries
+
+`PropositionQuery` is a data class assembled through `with*` methods. The axes:
+
+* *Scope*: `contextId`, `entityId`, `anyEntityIds`, `allEntityIds`
+* *Lifecycle*: `statuses`, `pinned`, `minLevel`, `maxLevel`
+* *Time*: `createdAfter`/`Before`, `revisedAfter`/`Before`, `accessedAfter`/`Before`
+* *Belief*: `minConfidence`, `minEffectiveConfidence` (with `effectiveConfidenceAsOf` and `decayK`),
+  `belowEffectiveConfidence`, `minImportance`, `minReinforceCount`, `minTrustScore`
+* *Shape*: `orderBy`, `limit`
+
+[source,java]
+----
+var stale = PropositionQuery.againstContext(contextId)
+        .withBelowEffectiveConfidence(0.2)
+        .withStatus(PropositionStatus.ACTIVE)
+        .withLimit(100);
+----
+
+Kotlin `infix` factories have Java-friendly `withXxx` and `againstContext` equivalents throughout.
+
+==== Projections
+
+A projection is a rebuildable, typed view. Nothing in a projection is authoritative — if it and the
+propositions disagree, the propositions win.
+
+[cols="1,3", options="header"]
+|===
+| Projection | What it produces
+
+| Graph (`GraphProjector`)
+| A typed entity-relationship graph. `RelationBasedGraphProjector` projects from declared
+  `Relations`; `LlmGraphProjector` infers edges. Edges carry lineage, so a changed source cascades a
+  stale marking rather than silently leaving a wrong edge in place, and reconciliation is idempotent.
+
+| Prolog (`PrologProjector`)
+| A tuProlog fact base you can run rules against. Experimental — see <<features-prolog-inference>>.
+
+| Memory (`MemoryProjector`)
+| Propositions sorted into `semantic`, `episodic`, `procedural` and `working` buckets, ready to drop
+  into an agent's context. See <<how-to-agent-memory>>.
+
+| Report (`ReportProjector`, `RationaleProjector`)
+| Human-readable output, including "why is this believed" with the evidence. In `dice-report`.
+|===
+
+`EventEmittingProjector` and `EventEmittingPropositionRepository` are decorators that publish Spring
+application events on projection and on save. Wire them in when you want something to react.
+
+==== Retrieval
+
+`RetrievalRouter` is the single entry point for retrieval, choosing a `RetrievalMode` rather than
+making the caller pick between vector search, graph traversal and keyword overlap. Authority
+filtering is applied at query time, and pushed down to the backend where the backend says it can
+honour it.
+
+.Try it now
+[source,java]
+----
+System.out.println(propositionRepository.getClass().getSimpleName());
+System.out.println("vector:   " + (propositionRepository instanceof VectorSearchCapable));
+System.out.println("graph:    " + (propositionRepository instanceof GraphQueryCapable));
+System.out.println("temporal: " + (propositionRepository instanceof TemporalQueryCapable));
+----
+On the quickstart's in-memory default this tells you exactly which capabilities you have before you
+write a query that needs one.

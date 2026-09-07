@@ -1,0 +1,142 @@
+[[reference-package-structure]]
+=== Package structure
+
+The `dice` module is organised by responsibility. This is the map for finding the type you need.
+
+[cols="2,3", options="header"]
+|===
+| Package | What lives there
+
+| `com.embabel.dice.proposition`
+| `Proposition`, `PropositionStatus`, `PropositionStore`, `PropositionRepository`,
+  `PropositionQuery`, `DecayManager`, `DecaySweeper`, `Projection`, `EntityMention`,
+  `Derivation`, `RelationshipTypes`, and the capability fragments `VectorSearchCapable`,
+  `GraphTraversalCapable`, `GraphQueryCapable`, `TemporalQueryCapable`.
+
+| `com.embabel.dice.proposition.extraction`
+| `PropositionExtractor` SPI and `LlmPropositionExtractor`.
+
+| `com.embabel.dice.proposition.revision`
+| `PropositionReviser` SPI and `LlmPropositionReviser`.
+
+| `com.embabel.dice.proposition.store`
+| `InMemoryPropositionRepository`, `JsonFilePropositionRepository`,
+  `Neo4jRagPropositionRepository`, `InMemoryDecayManager`.
+
+| `com.embabel.dice.proposition.gate`
+| Admission gates: `ExtractionGate`, `ExtractionGatePipeline`, `StandardGates`, `ObservableGate`.
+
+| `com.embabel.dice.pipeline`
+| `PropositionPipeline`, `PersistablePropositions`, `PropositionResults`,
+  `ExtractionExecutionStrategy`.
+
+| `com.embabel.dice.spi`
+| Policy extension points: `TrustScorer`, `AuthorityWeightedTrustScorer`, `Authority`,
+  `ConflictDetector`, `ConflictType`, `StatusTransitionPolicy`, `SweepPolicy`, `SweepAction`,
+  `PropositionMark`, `MarkReason`, `CollectorSignals`, `CollectorTraceStore`, and their defaults.
+
+| `com.embabel.dice.common`
+| Shared types: `SourceAnalysisContext`, `EntityResolver`, `Relations`, `Relation`, `Resolution`,
+  `KnownEntity`, `KnowledgeType`, `SchemaAdherence`, `SchemaRegistry`, `ContentHash`,
+  `CanonicalNameSelector`, `EvidenceFloor`, `DiceEvent`, `DiceEventListeners`, `DiceMetadataKeys`.
+
+| `com.embabel.dice.common.filter`
+| `MentionFilter`, `SchemaValidatedMentionFilter`, `ContextAwareMentionFilters`,
+  `ObservableMentionFilter`.
+
+| `com.embabel.dice.common.resolver`
+| `EscalatingEntityResolver`, `ChainedEntityResolver`, `KnownEntityResolver`,
+  `InMemoryEntityResolver`, `AlwaysCreateEntityResolver`, `CandidateSearcher`, `CandidateBakeoff`,
+  `LlmCandidateBakeoff`, `ContextCompressor`.
+
+| `com.embabel.dice.common.resolver.searcher`
+| `DefaultCandidateSearchers` plus the individual searchers: by exact name, normalized name, partial
+  name, fuzzy name, id, vector, and `AgenticCandidateSearcher`.
+
+| `com.embabel.dice.entity`
+| The entity-only pipeline: `EntityPipeline`, `EntityExtractor`, `LlmEntityExtractor`,
+  `EntityIncrementalAnalyzer`, `EntityResolutionService`, `EntityResolutionTools`.
+
+| `com.embabel.dice.incremental`
+| `IncrementalAnalyzer`, `AbstractIncrementalAnalyzer`, `IncrementalSource`, `ConversationSource`,
+  `ConversationSegmenter`, `ChunkHistoryStore`.
+
+| `com.embabel.dice.projection.graph`
+| `GraphProjector`, `RelationBasedGraphProjector`, `LlmGraphProjector`, `GraphProjectionService`,
+  `ProjectionPolicy`, `GraphRelationshipPersister`, `RelationshipDescriptionSynthesizer`.
+
+| `com.embabel.dice.projection.prolog`
+| `PrologProjector`, `DefaultPrologProjector`, `PrologEngine`, `PrologTypes`.
+
+| `com.embabel.dice.projection.memory`
+| `MemoryProjector`, `MemoryProjection`, `MemoryRetriever`, `MemoryConsolidator`,
+  `DreamLoopOrchestrator`, `MemoryMaintenanceOrchestrator`, `CollectorRunner`, `CollectorStrategy`,
+  `DecayCollectorStrategy`, `DuplicateCollectorStrategy`.
+
+| `com.embabel.dice.projection.memory.collector`
+| `MultiSignalCollectorStrategy`, `CollectorRunContext`, the signal scorers and pair sources,
+  `CollectorSurvivorPolicy`, and trace storage.
+
+| `com.embabel.dice.projection.lineage`
+| `ProjectionRecordStore`, `Reconciler`.
+
+| `com.embabel.dice.projection.grounding`
+| Grounding support — the link from claims back to chunks.
+
+| `com.embabel.dice.operations`
+| `PropositionGroup`, and under `abstraction`, `consolidation` and `contrast`:
+  `PropositionAbstractor`, `PropositionContraster`, and the dream-loop passes
+  (`SessionConsolidationPass`, `AbstractionPass`, `ContradictionResolutionPass`, `DecaySweepPass`).
+
+| `com.embabel.dice.query.graph`
+| `GraphQuery`, `GraphNeighborhood`, `GraphPath`, `PropositionLineage`.
+
+| `com.embabel.dice.query.discovery`
+| `DiscoveryQuery`, `RetrievalRouter`, `RetrievalMode`, and the discovery DTOs.
+
+| `com.embabel.dice.query.oracle`
+| `Oracle`, `LlmOracle`, `ToolOracle`, `Question`, `PrologTools`.
+
+| `com.embabel.dice.text2graph`
+| `KnowledgeGraphBuilder`, `SourceAnalyzer`, and the entity-merge and relationship-resolution
+  policies, under `builder`, `resolver` and `support`.
+
+| `com.embabel.dice.provenance`
+| `ProvenanceEntry`, `SourceLocator`.
+
+| `com.embabel.dice.temporal`
+| `TemporalMetadata` and validity-window support.
+
+| `com.embabel.dice.agent`
+| Agent-facing integration with embabel-agent.
+
+| `com.embabel.dice.web.rest`
+| `DiceRestConfiguration`, `PropositionPipelineController`, `MemoryController`,
+  `DiscoveryController`, and the DTOs. Under `security`: `ApiKeySecurityAutoConfiguration`,
+  `ApiKeyAuthenticator`.
+|===
+
+==== The other modules
+
+[cols="2,3", options="header"]
+|===
+| Package | What lives there
+
+| `com.embabel.dice.storage` (`dice-storage`)
+| `DrivinePropositionRepository`, `DrivineChunkHistoryStore`, `GraphDecayManager`,
+  `DrivineProjectionRecordStore`, `DrivineCollectorRecordStore`, `DrivineCollectorTraceStore`,
+  `PropositionGraphMapper`, `GraphProjectionCypher`, and under `model` the graph node and view
+  types.
+
+| `com.embabel.dice.storage.autoconfigure` (`dice-storage-autoconfigure`)
+| `DiceStorageAutoConfiguration`, `DiceStoreProperties`, `CollectorAutoConfiguration`,
+  `CollectorProperties`.
+
+| `com.embabel.dice.report` (`dice-report`)
+| `ReportProjector`, `StructuredReportProjector`, `RationaleProjector`, `LlmRationaleProjector`,
+  `SemanticLink`, `SemanticLinkDiscoverer`, `TwoHopSemanticLinkDiscoverer`.
+
+| `com.embabel.dice.ingestion` (`dice-ingestion`)
+| `IngestionHandler`, `TextIngestionHandler`, `IngestedArtifact`, `IngestionBatch`,
+  `IngestionLedger`, `IngestionResult`.
+|===

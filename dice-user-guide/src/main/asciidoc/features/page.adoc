@@ -1,0 +1,53 @@
+[[features]]
+== Features
+:sectids:
+:sectanchors:
+
+One page per opt-in surface. Each opens with the exact bean or property that switches it on, so you
+never have to guess whether a feature is active.
+
+.Activation conditions at a glance
+[cols="2,3", options="header"]
+|===
+| Surface | Activation condition
+
+| <<features-graph-storage>>
+| `embabel.dice.store.type=graph`
+
+| <<features-vector-index>>
+| `embabel.dice.store.vector-index.enabled=true` (on by default, graph backend only)
+
+| <<features-decay>>
+| `embabel.dice.store.decay.enabled=true` (on by default); `prune-stale` is `false`
+
+| <<features-multi-signal-collector>>
+| `embabel.dice.collector.enabled` — on unless set to `false`
+
+| <<features-concurrent-extraction>>
+| A parallel or batched `ExtractionExecutionStrategy` on the pipeline
+
+| <<features-web-api>>
+| `@Import(DiceRestConfiguration.class)` plus the beans the controllers need
+
+| <<features-api-key-security>>
+| `dice.security.api-key.enabled=true`
+
+| <<features-prolog-inference>>
+| A `PrologProjector` bean. Experimental.
+|===
+
+include::graph-storage.adoc[]
+
+include::vector-index.adoc[]
+
+include::decay.adoc[]
+
+include::multi-signal-collector.adoc[]
+
+include::concurrent-extraction.adoc[]
+
+include::web-api.adoc[]
+
+include::api-key-security.adoc[]
+
+include::prolog-inference.adoc[]

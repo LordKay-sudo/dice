@@ -1,0 +1,89 @@
+[[how-to-analyze-conversations]]
+=== Analyse a conversation incrementally
+
+*Prerequisites*: `dice`, a configured LLM, a `PropositionRepository` and a `ChunkHistoryStore`.
+
+A conversation is not a document. It arrives a turn at a time, the same claim gets restated and
+revised, and the user themselves is an entity the extractor should already know about.
+
+==== The incremental analyser
+
+`IncrementalAnalyzer` processes an `IncrementalSource` and remembers what it has already seen.
+`ConversationSource` wraps a conversation; `ConversationSegmenter` decides where one unit of analysis
+ends and the next begins, so a claim spanning three turns is not cut in half.
+
+[source,java]
+----
+var source = new ConversationSource(conversation);
+var result = analyzer.analyze(source, context);
+result.persist(propositionRepository, entityRepository);
+----
+
+Re-analysing the same conversation is cheap: `ChunkHistoryStore` reports what has already been
+processed and the analyser skips it.
+
+==== Tell the context who is talking
+
+Without this, "I prefer the early recordings" produces a claim about nobody.
+
+[source,java]
+----
+var context = SourceAnalysisContext
+        .withContextId(user.currentContext())
+        .withEntityResolver(entityResolverForUser(user))
+        .withSchema(dataDictionary)
+        .withRelations(relations)
+        .withKnownEntities(KnownEntity.asCurrentUser(user));
+----
+
+`KnownEntity.asCurrentUser(...)` is the important line: it gives the resolver a first-class identity
+for the speaker, so first-person claims attach to them.
+
+==== Drive it from events
+
+Conversation analysis costs an LLM call, so it should not sit in the request path.
+`ConversationAnalysisRequestEvent` exists for exactly this:
+
+[source,java]
+----
+@Async
+@Transactional
+@EventListener
+public void onConversationExchange(ConversationAnalysisRequestEvent event) {
+    var context = SourceAnalysisContext
+            .withContextId(event.user.currentContext())
+            .withEntityResolver(entityResolverForUser(event.user))
+            .withSchema(dataDictionary)
+            .withRelations(relations)
+            .withKnownEntities(KnownEntity.asCurrentUser(event.user));
+
+    var source = new ConversationSource(event.conversation);
+    var result = analyzer.analyze(source, context);
+
+    result.persist(propositionRepository, entityRepository);
+}
+----
+
+`SourceAnalysisRequestEvent` is the general form for non-conversation sources.
+
+==== Turn on revision
+
+In a conversation the same thing gets said repeatedly, and sometimes retracted. Without revision you
+accumulate near-duplicates; with it, restatements reinforce and reversals are classified as
+contradictions.
+
+[source,java]
+----
+var pipeline = PropositionPipeline
+        .withExtractor(extractor)
+        .withRevision(reviser, propositionRepository);
+----
+
+Revision compares against what is already stored and classifies each new claim as new, merged,
+reinforced or contradicted. It still persists nothing — `hasRevision` tells you which set
+`propositionsToPersist()` will return.
+
+==== Scope per user
+
+Give each user their own `ContextId`. It is the boundary that keeps one user's beliefs out of
+another's retrieval, and it is what makes "forget everything about me" a bounded operation.
