@@ -52,7 +52,7 @@ enum class DriftMode {
  * once one exists.
  */
 @ApiStatus.Experimental
-@ConfigurationProperties(prefix = "embabel.dice.metamodel")
+@ConfigurationProperties(prefix = DicePropertyPrefixes.METAMODEL)
 data class MetamodelProperties(
 
     /**

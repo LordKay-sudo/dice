@@ -124,7 +124,7 @@ import org.springframework.context.annotation.Bean
 @AutoConfiguration(after = [DiceStorageAutoConfiguration::class])
 @ConditionalOnBean(DeclaredSchemaSource::class)
 @ConditionalOnProperty(
-    prefix = "embabel.dice.metamodel",
+    prefix = DicePropertyPrefixes.METAMODEL,
     name = ["enabled"],
     havingValue = "true",
     matchIfMissing = true,
@@ -146,7 +146,7 @@ class MetamodelAutoConfiguration {
      * their own gets both, and these are still required.
      */
     @Bean
-    @ConditionalOnProperty(prefix = "embabel.dice.store", name = ["type"], havingValue = "graph")
+    @ConditionalOnProperty(prefix = DicePropertyPrefixes.STORE, name = ["type"], havingValue = "graph")
     fun metamodelSchema(): SchemaCatalog = SchemaCatalog.of(MetamodelSchema.specs())
 
     /**
@@ -155,7 +155,7 @@ class MetamodelAutoConfiguration {
      * this bean governance would observe its own report bookkeeping as drift.
      */
     @Bean
-    @ConditionalOnProperty(prefix = "embabel.dice.store", name = ["type"], havingValue = "graph")
+    @ConditionalOnProperty(prefix = DicePropertyPrefixes.STORE, name = ["type"], havingValue = "graph")
     fun metamodelStorageSchema(): DiceStorageSchema = MetamodelSchema
 
     /**
@@ -168,7 +168,7 @@ class MetamodelAutoConfiguration {
      * capability at injection time and leave a `SweptBaselineStore` injection point unresolvable.
      */
     @Bean
-    @ConditionalOnProperty(prefix = "embabel.dice.store", name = ["type"], havingValue = "graph")
+    @ConditionalOnProperty(prefix = DicePropertyPrefixes.STORE, name = ["type"], havingValue = "graph")
     @ConditionalOnMissingBean(MetamodelVersionStore::class)
     fun drivineMetamodelVersionStore(persistenceManager: PersistenceManager): SweptBaselineStore {
         logger.debug("Wiring graph MetamodelVersionStore: DrivineMetamodelVersionStore")
@@ -176,7 +176,7 @@ class MetamodelAutoConfiguration {
     }
 
     @Bean
-    @ConditionalOnProperty(prefix = "embabel.dice.store", name = ["type"], havingValue = "graph")
+    @ConditionalOnProperty(prefix = DicePropertyPrefixes.STORE, name = ["type"], havingValue = "graph")
     @ConditionalOnMissingBean(DriftReportStore::class)
     fun drivineDriftReportStore(persistenceManager: PersistenceManager): DriftReportStore {
         logger.debug("Wiring graph DriftReportStore: DrivineDriftReportStore")
@@ -185,13 +185,13 @@ class MetamodelAutoConfiguration {
 
     /** What dice owns in this application, derived from the registered storage schemas. */
     @Bean
-    @ConditionalOnProperty(prefix = "embabel.dice.store", name = ["type"], havingValue = "graph")
+    @ConditionalOnProperty(prefix = DicePropertyPrefixes.STORE, name = ["type"], havingValue = "graph")
     @ConditionalOnMissingBean(DiceOwnedSchema::class)
     fun diceOwnedSchema(schemas: List<DiceStorageSchema>): DiceOwnedSchema =
         DiceOwnedSchema.of(schemas)
 
     @Bean
-    @ConditionalOnProperty(prefix = "embabel.dice.store", name = ["type"], havingValue = "graph")
+    @ConditionalOnProperty(prefix = DicePropertyPrefixes.STORE, name = ["type"], havingValue = "graph")
     @ConditionalOnMissingBean(ObservedSchemaSource::class)
     fun drivineObservedSchemaSource(
         persistenceManager: PersistenceManager,
@@ -310,7 +310,7 @@ class MetamodelAutoConfiguration {
     @ConditionalOnMissingBean(DriftCheckRunner::class)
     @ConditionalOnBean(value = [ObservedSchemaSource::class, DriftReportStore::class])
     @ConditionalOnProperty(
-        prefix = "embabel.dice.metamodel.drift",
+        prefix = DicePropertyPrefixes.METAMODEL_DRIFT,
         name = ["mode"],
         havingValue = "observe",
         matchIfMissing = true,
