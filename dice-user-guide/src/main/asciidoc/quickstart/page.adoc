@@ -1,0 +1,211 @@
+[[quickstart]]
+== Quickstart
+:sectids:
+:sectanchors:
+
+One path, from an empty Spring Boot application to a printed report. No Neo4j, no Docker, nothing
+external to create. Every decision that could be made takes the default and links out.
+
+At the end you will have extracted propositions from a paragraph of text, persisted them, queried
+them back, and rendered a report.
+
+[[quickstart-dependencies]]
+=== Dependencies
+
+DICE publishes no aggregator starter, so the quickstart uses two coordinates: the
+auto-configuration, which pulls `dice` and `dice-storage` transitively, and the report projectors.
+
+[source,xml,subs="attributes+"]
+----
+<dependency>
+    <!-- Spring Boot auto-configuration: store backend, decay tick, collector. -->
+    <groupId>com.embabel.dice</groupId>
+    <artifactId>dice-storage-autoconfigure</artifactId>
+    <version>{dice-version}</version>
+</dependency>
+
+<dependency>
+    <!-- Rationale, structured reports, link discovery. -->
+    <groupId>com.embabel.dice</groupId>
+    <artifactId>dice-report</artifactId>
+    <version>{dice-version}</version>
+</dependency>
+----
+
+You also need an embabel-agent runtime on the classpath. DICE declares `embabel-agent-api` and
+`embabel-agent-rag-core` as `provided`, so the version your application brings is the version that
+runs.
+
+Snapshots and releases resolve from Embabel's Artifactory:
+
+[source,xml]
+----
+<repositories>
+    <repository>
+        <id>embabel-snapshots</id>
+        <url>https://repo.embabel.com/artifactory/libs-snapshot</url>
+        <releases><enabled>false</enabled></releases>
+        <snapshots><enabled>true</enabled></snapshots>
+    </repository>
+</repositories>
+----
+
+[[quickstart-configuration]]
+=== Configuration
+
+The only thing you must configure is an LLM provider, and that is inherited from embabel-agent — set
+whatever API key your chosen provider expects. DICE's own defaults need nothing:
+
+[source,yaml]
+----
+embabel:
+  dice:
+    store:
+      type: in-memory     # the default; stated here to be explicit
+----
+
+[[quickstart-what-you-get]]
+=== What auto-configuration gives you
+
+With `dice-storage-autoconfigure` on the classpath and `type` left at `in-memory`, the following
+beans exist, each `@ConditionalOnMissingBean` so your own bean always wins:
+
+[cols="1,2", options="header"]
+|===
+| Bean | What it is for
+
+| `PropositionRepository`
+| `InMemoryPropositionRepository`, backed by the `Ai` bean for embeddings. Where propositions live.
+
+| `ChunkHistoryStore`
+| Remembers which chunks have already been processed, so incremental analysis does not redo work.
+
+| `ProjectionRecordStore`
+| Lineage for projected edges, so a projection can be reconciled rather than rebuilt.
+
+| `CollectorRecordStore`
+| The audit trail for reclamation runs.
+
+| `DecayManager` + the scheduled decay tick
+| Materialises effective confidence and applies lifecycle transitions, hourly by default.
+|===
+
+Switching `type` to `graph` swaps the first four for their Drivine/Neo4j equivalents and changes
+nothing else in your code. See <<features-graph-storage>>.
+
+[[quickstart-extract]]
+=== Extract
+
+Build a pipeline from an extractor, then run a chunk through it. The pipeline is immutable — every
+`with*` method returns a new instance.
+
+[source,java]
+----
+@Bean
+PropositionPipeline propositionPipeline(PropositionExtractor extractor) {
+    return PropositionPipeline.withExtractor(extractor);
+}
+
+@Bean
+LlmPropositionExtractor llmPropositionExtractor(Ai ai, PropositionRepository repository) {
+    return LlmPropositionExtractor
+            .withLlm(llmOptions)
+            .withAi(ai)
+            .withPropositionRepository(repository)
+            .withSchemaAdherence(SchemaAdherence.DEFAULT);
+}
+----
+
+Then extract:
+
+[source,java]
+----
+var context = new SourceAnalysisContext(
+        dataDictionary,                                 // your domain schema
+        EscalatingEntityResolver.create(entityRepo),    // how mentions become entities
+        new ContextId("quickstart"));                   // the scope everything lands in
+
+var chunk = new Chunk("chunk-1",
+        "Ada Lovelace worked with Charles Babbage on the Analytical Engine.");
+
+var results = pipeline.process(List.of(chunk), context);
+
+results.getPropositions().forEach(p ->
+        System.out.printf("%.2f  %s%n", p.getConfidence(), p.getText()));
+----
+
+You should see one or more claims printed with their confidence, something like:
+
+[source]
+----
+0.92  Ada Lovelace worked with Charles Babbage.
+0.88  Ada Lovelace worked on the Analytical Engine.
+----
+
+[[quickstart-persist]]
+=== Persist
+
+The pipeline stored nothing. It returned `PersistablePropositions`, and if you drop that on the
+floor the work is discarded. Persist inside your own transaction:
+
+[source,java]
+----
+@Transactional
+public void store(PersistablePropositions results) {
+    results.persist(propositionRepository, namedEntityDataRepository);
+}
+----
+
+`persist` saves only the entities actually referenced by the propositions being saved, saves the
+propositions themselves — the revised set if revision was enabled, the raw set otherwise — and
+creates the structural relationships linking chunks, propositions and entities.
+
+[[quickstart-query]]
+=== Query
+
+Queries always start from a `ContextId`. There is no `PropositionQuery.create()`, deliberately: it
+would make "load everything" a one-liner.
+
+[source,java]
+----
+// Everything in this context.
+var all = propositionRepository.query(
+        PropositionQuery.againstContext(new ContextId("quickstart")));
+
+// Only what is still strongly believed, best first.
+var confident = propositionRepository.query(
+        PropositionQuery.againstContext(new ContextId("quickstart"))
+                .withMinEffectiveConfidence(0.7));
+
+// Everything mentioning one entity.
+var aboutAda = propositionRepository.query(
+        PropositionQuery.againstContext(new ContextId("quickstart"))
+                .withEntityId(adaId));
+----
+
+[NOTE]
+====
+`InMemoryPropositionRepository` needs an `EmbeddingService` for vector search. The minimal path here
+queries by entity and `ContextId` only, which needs no embeddings at query time.
+====
+
+[[quickstart-report]]
+=== Report
+
+Turn what you stored into something a person can read:
+
+[source,java]
+----
+var report = reportProjector.report(confident, "What we know about Ada Lovelace");
+System.out.println(report.summary());
+----
+
+[[quickstart-next]]
+=== Where to go next
+
+* <<concepts>> — read the five concept pages in order. They define the vocabulary the rest of the
+  guide uses.
+* <<how-to>> — task-shaped pages: extracting from documents, tuning resolution, querying, projecting
+  to a graph, agent memory.
+* <<features>> — the opt-in surfaces, each opening with the property or bean that switches it on.
+* <<production>> — what changes when this stops being a quickstart.

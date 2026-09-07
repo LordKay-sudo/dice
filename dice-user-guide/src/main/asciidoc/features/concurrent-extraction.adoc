@@ -1,0 +1,79 @@
+[[features-concurrent-extraction]]
+=== Concurrent extraction
+
+*Activation*: a parallel or batched `ExtractionExecutionStrategy` on the pipeline —
+`pipeline.withExecutionStrategy(...)`. The default is `SerialExtractionStrategy`.
+
+*Availability*: `dice`. No extra infrastructure; it raises concurrent load on your LLM provider.
+
+==== When to use it
+
+Use it for bulk ingestion, where extraction dominates wall-clock time and each chunk is an
+independent LLM call.
+
+Leave it off for conversation analysis — one chunk at a time gains nothing — and until you have
+verified the condition below.
+
+==== The condition you must verify first
+
+[WARNING]
+====
+Only the extraction stage is dispatched concurrently. Enabling a parallel or batched strategy in
+production is gated on verifying that *your `PropositionExtractor` is thread-safe*. See
+`ExtractionExecutionStrategy` for the thread-safety verification requirement.
+
+A stateful extractor under a parallel strategy produces corrupted output that looks plausible.
+====
+
+==== Impact
+
+* *Latency*: the extraction stage scales with the strategy's parallelism. Resolution does not.
+* *LLM calls*: the same number, issued concurrently. Check your provider's rate limits.
+* *Cost*: unchanged.
+* *Memory*: extraction results for in-flight chunks are held until the resolution stage consumes
+  them.
+
+==== What stays serial, and why
+
+`process(...)` has two stages:
+
+. *Extraction* — stateless per chunk, touches no resolver. Dispatched by the strategy.
+. *Resolution* — reads and writes shared entity identity. Always serial.
+
+Keeping resolution serial is what preserves cross-chunk entity identity regardless of how extraction
+was dispatched. An entity minted while processing chunk 2 is recognised in chunk 7 under every
+strategy.
+
+Input order is preserved by the strategy, and a chunk whose extraction failed yields a null slot
+that becomes a typed failed result in the resolution stage — one bad chunk does not fail the batch.
+
+==== How to enable
+
+[source,java]
+----
+// The default.
+pipeline.withExecutionStrategy(SerialExtractionStrategy.INSTANCE);
+
+// Parallel.
+pipeline.withExecutionStrategy(new ParallelExtractionStrategy(concurrency));
+
+// Batched — batchSize > 1 is concurrent, batchSize == 1 is effectively serial.
+pipeline.withExecutionStrategy(new BatchedExtractionStrategy(batchSize));
+----
+
+`withExecutionStrategy` returns a new pipeline, like every other `with*` method.
+
+==== Example
+
+[source,java]
+----
+var bulk = PropositionPipeline
+        .withExtractor(threadSafeExtractor)
+        .withExecutionStrategy(new ParallelExtractionStrategy(8));
+
+var results = bulk.process(manyChunks, context);
+results.persist(propositionRepository, namedEntityDataRepository);
+----
+
+Measure before and after. If extraction was not your bottleneck, this buys nothing and adds a
+thread-safety obligation you now have to maintain.

@@ -29,6 +29,7 @@
         <module>dice-report</module>
         <module>dice-ingestion</module>
         <module>dice-integration-tests</module>
+        <module>dice-user-guide</module>
     </modules>
 
     <properties>

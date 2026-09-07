@@ -1,0 +1,180 @@
+[[reference-configuration-properties]]
+=== Configuration properties
+
+Every property DICE binds, with its default and the module that reads it.
+
+==== `embabel.dice.store` — `DiceStoreProperties`
+
+Read by `dice-storage-autoconfigure`.
+
+[cols="2,1,1,3", options="header"]
+|===
+| Property | Type | Default | Meaning
+
+| `embabel.dice.store.type`
+| `String`
+| `in-memory`
+| Backend kind: `graph` (Drivine/Neo4j) or `in-memory`.
+
+| `embabel.dice.store.decay.enabled`
+| `boolean`
+| `true`
+| Whether the scheduled decay tick runs.
+
+| `embabel.dice.store.decay.interval-ms`
+| `long`
+| `3600000`
+| Delay between ticks, in milliseconds. One hour.
+
+| `embabel.dice.store.decay.k`
+| `double`
+| `2.0`
+| Decay-rate multiplier used by the staleness policy.
+
+| `embabel.dice.store.decay.prune-stale`
+| `boolean`
+| `false`
+| Hard-delete `STALE` propositions during the lifecycle sweep.
+
+| `embabel.dice.store.vector-index.enabled`
+| `boolean`
+| `true`
+| Whether the proposition embedding vector index is created. Graph backend only.
+|===
+
+The vector index's label, property, name and similarity are *not* configurable — they are fixed by
+the `@VectorIndex` annotation on `PropositionNode.embedding` and live as constants on
+`DrivinePropositionRepository`.
+
+==== `embabel.dice.collector` — `CollectorProperties`
+
+Read by `dice-storage-autoconfigure`. Validated: `match-threshold` must be in `[0.0, 1.0]` and
+signal weights must be non-negative.
+
+[cols="2,1,1,3", options="header"]
+|===
+| Property | Type | Default | Meaning
+
+| `embabel.dice.collector.enabled`
+| `boolean`
+| `true`
+| Master switch for the whole collector.
+
+| `embabel.dice.collector.match-threshold`
+| `double`
+| `0.6`
+| Minimum aggregate score for an edge to be eligible to merge its endpoints.
+
+| `embabel.dice.collector.signals.<name>.enabled`
+| `boolean`
+| `true`
+| Whether this signal participates.
+
+| `embabel.dice.collector.signals.<name>.weight`
+| `Double?`
+| `null`
+| Contribution weight. `null` keeps the scorer's own default — not the same as `0`.
+
+| `embabel.dice.collector.signals.<name>.similarity-threshold`
+| `Double?`
+| `null`
+| Cosine floor for candidate recall. Vector signal only.
+
+| `embabel.dice.collector.signals.<name>.top-k`
+| `Integer?`
+| `null`
+| Max similar members considered per cluster seed. Vector signal only.
+
+| `embabel.dice.collector.sweep.delta`
+| `boolean`
+| `false`
+| Property binding only — there is no runner behind it yet.
+
+| `embabel.dice.collector.trace.enabled`
+| `boolean`
+| `true`
+| Whether runs are recorded to a `CollectorTraceStore`.
+
+| `embabel.dice.collector.trace.detail-retention-days`
+| `Integer?`
+| `null`
+| How long detailed trace rows are kept. `null` keeps them indefinitely.
+|===
+
+Valid `<name>` values are the built-in signals: `vector`, `lexical`, `entity-overlap`,
+`grounding-overlap`, `provenance-overlap`, `polarity-veto`.
+
+==== `dice.security.api-key` — `DiceApiKeyProperties`
+
+Read by `dice`. Note the prefix: `dice.`, not `embabel.dice.`.
+
+[cols="2,1,1,3", options="header"]
+|===
+| Property | Type | Default | Meaning
+
+| `dice.security.api-key.enabled`
+| `boolean`
+| `false`
+| Enable API-key authentication over the REST endpoints.
+
+| `dice.security.api-key.keys`
+| `List<String>`
+| empty
+| Valid API keys. Development only — supply an `ApiKeyAuthenticator` bean in production.
+
+| `dice.security.api-key.header-name`
+| `String`
+| `X-API-Key`
+| Header carrying the key.
+
+| `dice.security.api-key.path-patterns`
+| `List<String>`
+| `/api/v1/**`
+| Path patterns the filter protects.
+|===
+
+==== `embabel.dice.source-analyzer`
+
+Read by `dice`, bound by `LlmSourceAnalyzer`. Configures the text-to-graph source analyser.
+
+==== Properties DICE does not own
+
+An LLM provider must be configured, and that configuration belongs to embabel-agent, not to DICE.
+Neo4j connection settings belong to Drivine. DICE reads neither.
+
+==== A complete example
+
+[source,yaml]
+----
+embabel:
+  dice:
+    store:
+      type: graph
+      decay:
+        enabled: true
+        interval-ms: 3600000
+        k: 2.0
+        prune-stale: false
+      vector-index:
+        enabled: true
+    collector:
+      enabled: true
+      match-threshold: 0.65
+      signals:
+        vector:
+          weight: 0.4
+          similarity-threshold: 0.85
+          top-k: 20
+        lexical:
+          weight: 0.2
+      trace:
+        enabled: true
+        detail-retention-days: 30
+
+dice:
+  security:
+    api-key:
+      enabled: true
+      keys:
+        - ${DICE_API_KEY}
+----

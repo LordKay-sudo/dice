@@ -1,0 +1,115 @@
+[[how-to-tune-entity-resolution]]
+=== Tune entity resolution
+
+*Prerequisites*: <<concepts-entity-resolution>> read, and a corpus you can re-run.
+
+Resolution has two failure modes, and they pull in opposite directions. *Under-merging* splits one
+real thing into several entities, so nothing you know about it is ever retrieved together.
+*Over-merging* welds two real things into one, and that is much harder to notice and much harder to
+undo. Tune towards under-merging: a duplicate can be collected later, a bad merge cannot be cleanly
+unpicked.
+
+==== Find out where resolution is happening
+
+`LevelResult` reports the `ResolutionLevel` that produced each answer, and how many candidates were
+considered. That distribution is the diagnostic:
+
+* Mostly `EXACT_MATCH` — healthy, and free.
+* Heavy `LLM_BAKEOFF` — expensive. Your cheap searchers are not recalling the right candidates.
+* Heavy `NO_MATCH` with minting on — you are creating duplicates. Recall is too narrow.
+* Bake-offs with many candidates — recall is too wide, and you are paying an LLM to sort it out.
+
+==== Fix recall before touching the LLM rungs
+
+The cheap searchers decide what the expensive ones ever see.
+
+[cols="1,3", options="header"]
+|===
+| Searcher | When it earns its place
+
+| `ByExactNameCandidateSearcher`
+| Always. Free, and catches the majority case.
+
+| `NormalizedNameCandidateSearcher`
+| Casing, punctuation and whitespace variation. Almost always worth it.
+
+| `PartialNameCandidateSearcher`
+| "Lovelace" for "Ada Lovelace". Necessary for conversation, noisy for catalogues.
+
+| `FuzzyNameCandidateSearcher`
+| Typos and transliteration. Widens recall; watch the bake-off rate after enabling.
+
+| `ByIdCandidateSearcher`
+| When your source text carries real identifiers.
+
+| `VectorCandidateSearcher`
+| Aliases that share no characters. Needs a vector index.
+
+| `AgenticCandidateSearcher`
+| An LLM goes looking. The most capable and the most expensive — last resort.
+|===
+
+`DefaultCandidateSearchers.create(repository)` assembles the standard chain;
+`DefaultCandidateSearchers.withoutVector(repository)` drops the vector searcher for stores with no
+index.
+
+==== Decide what happens when nothing matches
+
+[source,java]
+----
+// Ambiguity goes to an LLM.
+var resolver = EscalatingEntityResolver.create(entityRepository, llmCandidateBakeoff);
+
+// Ambiguity mints a new entity instead.
+var resolver = EscalatingEntityResolver.create(entityRepository, null);
+----
+
+And separately, whether minting is allowed at all:
+
+[source,java]
+----
+context = context.withMintNewEntities(false);   // unresolved mentions are vetoed, not minted
+----
+
+Minting off is the right default for a closed catalogue. Minting on is necessary for open-domain
+extraction, and is what makes mention filtering matter.
+
+==== Put known entities first
+
+`ChainedEntityResolver` tries resolvers in order and takes the first hit, so order is policy:
+
+[source,java]
+----
+var resolver = new ChainedEntityResolver(List.of(
+        new KnownEntityResolver(knownEntities),                     // the user, the tenant
+        EscalatingEntityResolver.create(entityRepository, bakeoff)   // everything else
+));
+----
+
+Do not add `InMemoryEntityResolver` by hand for a `process(...)` run — the pipeline adds it when
+minting is on, and adding it when minting is off produces mentions resolved to ids that will never
+exist.
+
+==== Reduce what reaches the resolver
+
+Every mention that should never have been a mention is a chance to resolve wrongly. A
+`MentionFilter` is cheaper than the resolution it prevents:
+
+[source,java]
+----
+pipeline = pipeline.withMentionFilter(
+        new ObservableMentionFilter(new SchemaValidatedMentionFilter(dataDictionary)));
+----
+
+Tightening `SchemaAdherence` to `STRICT` has the same effect earlier still, at the extractor. See
+<<concepts-context-and-schema>>.
+
+==== Clean up what got through
+
+Some duplication is unavoidable, and reclamation exists to absorb it. The
+`MultiSignalCollectorStrategy` blends vector, lexical, entity-overlap, grounding-overlap and
+provenance-overlap signals, with a polarity veto that stops a claim merging with its own negation.
+Tune `embabel.dice.collector.match-threshold` and the per-signal weights rather than loosening
+resolution — see <<features-multi-signal-collector>>.
+
+Run it dry first, and read the trace.

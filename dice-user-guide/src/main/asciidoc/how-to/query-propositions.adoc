@@ -1,0 +1,115 @@
+[[how-to-query-propositions]]
+=== Query propositions
+
+*Prerequisites*: a populated `PropositionRepository`.
+
+Every query starts from a `ContextId`. `PropositionQuery` has no `create()` factory, so there is no
+short way to write "load everything".
+
+[source,java]
+----
+var base = PropositionQuery.againstContext(new ContextId("user:42"));
+// or, equivalently
+var base = PropositionQuery.forContextId(new ContextId("user:42"));
+----
+
+==== By belief
+
+Filter on effective confidence, not raw confidence, unless you specifically want the extractor's
+original opinion:
+
+[source,java]
+----
+// What we currently believe.
+repository.query(base.withMinEffectiveConfidence(0.7));
+
+// What we believed at some past moment.
+repository.query(base.withMinEffectiveConfidence(0.7)
+                     .withEffectiveConfidenceAsOf(lastMonth));
+
+// What has faded — reclamation candidates.
+repository.query(base.withBelowEffectiveConfidence(0.2));
+
+// Repeatedly corroborated claims only.
+repository.query(base.withMinReinforceCount(3));
+
+// Weighted by source authority.
+repository.query(base.withMinTrustScore(0.6));
+----
+
+==== By entity
+
+[source,java]
+----
+repository.query(base.withEntityId(adaId));                  // mentions this entity
+repository.query(base.withAnyEntity(adaId, babbageId));      // mentions either
+repository.query(base.withAllEntities(adaId, babbageId));    // mentions both
+----
+
+`withAllEntities` is how you ask about a *relationship* without traversing a graph: claims that
+mention both endpoints are the claims about the pair.
+
+==== By lifecycle
+
+[source,java]
+----
+repository.query(base.withStatus(PropositionStatus.ACTIVE));
+repository.query(base.withPinned(true));
+repository.query(base.withMinLevel(1));      // abstractions only
+repository.query(base.withMaxLevel(0));      // directly extracted claims only
+----
+
+`level` is the abstraction ladder: 0 is extracted, higher levels were built by the consolidation
+`AbstractionPass`.
+
+==== By time
+
+Three independent clocks, three independent filters:
+
+[source,java]
+----
+base.withCreatedAfter(t)    // when the claim first appeared
+base.withRevisedAfter(t)    // when its content last changed — the decay anchor
+base.withAccessedAfter(t)   // when it was last read
+----
+
+Filtering on `revisedAfter` is what you want for "what changed"; `createdAfter` misses claims that
+were revised, and `accessedAfter` tells you about readers, not writers.
+
+==== Shape the result
+
+[source,java]
+----
+var top = base.withMinEffectiveConfidence(0.5)
+              .withOrderBy(OrderBy.EFFECTIVE_CONFIDENCE)
+              .withLimit(20);
+----
+
+`count(query)` returns the size without materialising the rows.
+
+==== Beyond the composable query
+
+`PropositionStore` also offers direct lookups — `findById`, `findByEntity`, `findByStatus`,
+`findByGrounding`, `findByMinLevel`, `findPinned` — plus `keywordOverlap(base, tokens, limit)` for
+lexical scoring over a base query, and `pin`/`unpin` for exempting a claim from reclamation.
+
+`touchAccessed(ids)` records that a set of propositions was read, without touching either revision
+clock.
+
+==== Vector, graph and routed retrieval
+
+Capabilities are optional per backend — check before you rely on one:
+
+[source,java]
+----
+if (repository instanceof VectorSearchCapable v) { /* similarity search */ }
+if (repository instanceof GraphQueryCapable g)   { /* neighbourhood, path, lineage */ }
+if (repository instanceof TemporalQueryCapable t) { /* validity windows */ }
+----
+
+`GraphQueryCapable` gives you `GraphNeighborhood`, `GraphPath` and `PropositionLineage`. Backends
+that support it may also report `honorsAuthorityFilter`, letting authority-filtered traversals run
+natively rather than being filtered afterwards.
+
+When you would rather not choose, use `RetrievalRouter`: it picks a `RetrievalMode` — vector, graph
+or lexical — from the shape of the query, and applies authority filtering at query time.

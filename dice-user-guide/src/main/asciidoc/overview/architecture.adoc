@@ -1,0 +1,66 @@
+[[overview-architecture]]
+=== Architecture
+
+DICE uses a proposition-based architecture inspired by the
+https://arxiv.org/abs/2505.10831[General User Models (GUM)] research from Stanford and Microsoft.
+Like GUM, it constructs confidence-weighted propositions through a cycle of *propose*, *retrieve*
+and *revise*.
+
+Natural-language propositions are the system of record. They accumulate evidence over time and
+project into typed views, each serving a different kind of question.
+
+....
+        Text / Chunks
+              |
+              v
+      LLM extraction  ......... concurrent, resolver-free
+              |
+              v
+    Entity resolution  ........ always serial
+              |
+              v
+  +-------------------------+
+  |      PROPOSITIONS       |   the system of record
+  | confidence + importance |
+  |        + decay          |
+  +-------------------------+
+     |    |    |    |    |    \
+     v    v    v    v    v     v
+  Vector Neo4j Prolog Memory Oracle Report
+  semantic graph  rules  agent  NL Q&A  rationale
+  retrieval traversal    context        + structure
+....
+
+==== The flow, in one pass
+
+. *Chunk.* Source material arrives as `Chunk` objects — from `dice-ingestion`, from a conversation,
+  or built directly by your code.
+. *Extract.* A `PropositionExtractor` (normally `LlmPropositionExtractor`) turns each chunk into
+  suggested propositions and the entity mentions inside them. This stage touches no resolver and is
+  safe to run concurrently.
+. *Resolve.* Each mention is matched against known entities or minted as a new one. This stage is
+  always serial, so entity identity holds across chunks regardless of how extraction was dispatched.
+. *Revise.* If a `PropositionReviser` is configured, new propositions are compared against what is
+  already stored and classified as new, merged, reinforced or contradicted.
+. *Gate.* Admission gates run over the result before anything is written.
+. *Persist.* The pipeline returns *unsaved* results. The caller decides the transaction boundary and
+  calls `persist(...)`. Nothing is stored until it does.
+. *Project.* Stored propositions are projected on demand into a graph, a Prolog fact base, agent
+  memory, or a report.
+
+The split at step 6 is deliberate: DICE never opens a transaction on your behalf.
+
+==== Design notes
+
+This guide describes how to *use* DICE. For why it behaves as it does — the decisions you cannot
+recover by reading a single class — the design notes live in `docs/design/` in the repository:
+
+* `extraction-pipeline.md` — the two-stage extract/resolve flow and why the pipeline returns unsaved results.
+* `proposition-lifecycle.md` — trust scoring, source authority, supersession versus contradiction, decay instead of deletion.
+* `knowledge-hygiene.md` — admission gates, mark-and-sweep reclamation, and the consolidation dream loop.
+* `consolidation-and-dream-loop.md` — the pass abstraction and the four consolidation passes.
+* `reclamation-and-collector.md` — mark-and-sweep internals, sweep policy, dry-run versus live, and the audit trail.
+* `graph-projection.md` — edge lineage, projection outcomes, the stale cascade, and idempotent reconciliation.
+* `retrieval-and-discovery.md` — store-agnostic graph queries, query-time authority filtering, and link discovery.
+* `durable-storage.md` — backend selection, defence-in-depth dedup, two-phase save, and the decay tick.
+* `events.md` — the domain-event model the store and pipeline emit.

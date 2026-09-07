@@ -1,0 +1,81 @@
+[[features-decay]]
+=== Decay and stale pruning
+
+*Activation*: `embabel.dice.store.decay.enabled=true` — on by default. Hard deletion is separate:
+`embabel.dice.store.decay.prune-stale`, `false` by default.
+
+*Availability*: `dice-storage-autoconfigure`, both backends. No extra infrastructure.
+
+==== When to use it
+
+Leave decay on. Without it, a claim made once two years ago competes on equal terms with one made
+this morning, and retrieval quality degrades as the store grows.
+
+Turn `prune-stale` on only when you have decided that reclaiming rows matters more than being able
+to answer "why did you stop believing that?". For most applications it does not.
+
+==== Impact
+
+* *Scheduling*: one tick per interval, hourly by default.
+* *Write*: the tick materialises cached effective confidence and applies lifecycle transitions.
+* *Latency*: on the graph backend the tick executes in the database; on in-memory it walks the store
+  in process. Size the interval accordingly.
+* *LLM calls*: none. Decay is arithmetic.
+
+==== How to enable
+
+[source,yaml]
+----
+embabel:
+  dice:
+    store:
+      decay:
+        enabled: true          # default
+        interval-ms: 3600000   # default: 1 hour
+        k: 2.0                 # decay-rate multiplier
+        prune-stale: false     # default: keep STALE propositions
+----
+
+==== What the tick does
+
+Two phases:
+
+. *Materialise* — recompute and cache effective confidence, so queries filtering on it do not have to
+  compute decay per row.
+. *Lifecycle* — apply the `StatusTransitionPolicy`, moving propositions whose effective confidence
+  has fallen far enough into a stale status. With `prune-stale: true`, hard-delete them.
+
+Pinned propositions are exempt.
+
+==== Tuning k
+
+`k` is the decay-rate multiplier. Higher `k` means faster erosion. It appears in three places, and
+they are independent:
+
+* `embabel.dice.store.decay.k` — used by the scheduled tick.
+* `PropositionQuery.decayK` — used when a query computes effective confidence, defaults to `2.0`.
+* `Proposition.effectiveConfidence(k)` — the direct call, defaults to `2.0`.
+
+Setting the property without the query parameter means the tick and your queries disagree about how
+fast things fade. Set both, or leave both at the default.
+
+==== Example
+
+[source,java]
+----
+var p = repository.findById(id);
+
+System.out.printf("raw=%.2f  now=%.2f  in 30 days=%.2f%n",
+        p.getConfidence(),
+        p.effectiveConfidence(),
+        p.effectiveConfidenceAt(Instant.now().plus(30, ChronoUnit.DAYS)));
+----
+
+Run this against a claim you care about before choosing `k`. The right value is the one where a
+belief you would want to have forgotten has faded, and one you would want to keep has not.
+
+==== The clock decay reads
+
+Decay is anchored on `contentRevised`, not `created` and not `metadataRevised`. Changing a claim's
+status, pinning it, or attaching grounding does not make it look fresh again. Only changing what it
+says does.

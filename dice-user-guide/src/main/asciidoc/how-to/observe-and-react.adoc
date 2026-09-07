@@ -1,0 +1,88 @@
+[[how-to-observe-and-react]]
+=== Observe and react to what DICE does
+
+*Prerequisites*: a Spring application context.
+
+DICE emits domain events, and every expensive or surprising decision has an observable wrapper.
+
+==== Events
+
+Two decorators publish Spring application events. Neither is wired by default — you opt in by
+wrapping:
+
+[source,java]
+----
+@Bean
+PropositionRepository propositionRepository(PropositionRepository delegate,
+                                            ApplicationEventPublisher publisher) {
+    return new EventEmittingPropositionRepository(delegate, publisher);
+}
+----
+
+`EventEmittingPropositionRepository` publishes on save; `EventEmittingProjector` publishes on
+projection. `PropositionPersisted` is the canonical durable signal — the one to build on when you
+need to know something was actually stored.
+
+`DiceEvent` is the event hierarchy; `DiceEventListeners` holds the listener support types.
+
+==== Pipeline events
+
+The pipeline emits its own, pre-persistence events:
+
+[source,java]
+----
+pipeline = pipeline.withEventListener(listener);
+----
+
+`process` emits one aggregate `ExtractionBatchCompleted` per run. With a reviser configured,
+`processChunk` also emits a per-proposition candidate event for each `RevisionResult`.
+
+Those candidate events are *pre-persistence signals*, and the distinction matters: a candidate event
+means the pipeline classified something, not that anything was written. If your listener has side
+effects, build them on `PropositionPersisted` instead.
+
+A listener that throws cannot abort a run — the pipeline wraps whatever you register in
+`SafeDiceEventListener`. The default is `DiceEventListener.DEV_NULL`, so behaviour is unchanged when
+no listener is set.
+
+==== Observable wrappers
+
+Two decorators exist purely so you can see what is being rejected:
+
+[source,java]
+----
+new ObservableMentionFilter(delegateFilter);   // which mentions were dropped, and why
+new ObservableGate(delegateGate);              // which propositions a gate rejected
+----
+
+Both are for tuning. A filter or gate you cannot observe is one you will eventually set wrong and
+not notice — the symptom is silence, and silence looks like success.
+
+==== Reclamation audit trail
+
+Every live collector run is recorded to a `CollectorRecordStore`, and detailed decisions to a
+`CollectorTraceStore`. The trace records the edges considered, the connected components found, and
+the decision made for each — enough to explain any individual merge after the fact.
+
+[source,yaml]
+----
+embabel:
+  dice:
+    collector:
+      trace:
+        enabled: true
+        detail-retention-days: 30   # null keeps detail indefinitely
+----
+
+`InMemoryCollectorTraceStore` is the default; `DrivineCollectorTraceStore` persists to Neo4j when the
+graph backend is selected.
+
+==== Projection health
+
+[source,java]
+----
+var health = graphQueries.projectionHealth(contextId);
+----
+
+Tells you what is stale, which is the signal that a reconciliation pass is due. Also exposed at
+`GET /api/v1/contexts/{contextId}/discovery/projection-health`.

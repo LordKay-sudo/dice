@@ -1,0 +1,96 @@
+[[how-to-agent-memory]]
+=== Give an agent memory
+
+*Prerequisites*: a populated `PropositionRepository` scoped by `ContextId`.
+
+An agent's context window is small and its conversation is long. Memory projection decides what goes
+in.
+
+==== The four kinds of memory
+
+`MemoryProjector.project(propositions)` returns a `MemoryProjection` with propositions sorted into
+four buckets, following the standard cognitive split:
+
+[cols="1,3", options="header"]
+|===
+| Bucket | What belongs there
+
+| `semantic`
+| Durable facts. "The user works in oncology research."
+
+| `episodic`
+| Things that happened. "On Tuesday the user asked about drug interactions."
+
+| `procedural`
+| How to do things in this domain. "This user wants citations with every claim."
+
+| `working`
+| The current task's scratch space. Short-lived by design.
+|===
+
+`KnowledgeType` is the enum behind the split. `MemoryProjection` exposes `size` and `all()`, so you
+can budget the context window across buckets rather than truncating a flat list.
+
+[source,java]
+----
+var projection = memoryProjector.project(
+        repository.query(PropositionQuery.againstContext(contextId)
+                                         .withMinEffectiveConfidence(0.5)));
+
+System.out.printf("semantic=%d episodic=%d procedural=%d working=%d%n",
+        projection.getSemantic().size(), projection.getEpisodic().size(),
+        projection.getProcedural().size(), projection.getWorking().size());
+----
+
+==== Recall
+
+`MemoryRetriever` is the read side, with four entry points shaped by how agents actually ask:
+
+[source,java]
+----
+memoryRetriever.recall(contextId, query, limit);         // general, relevance-ranked
+memoryRetriever.recallAbout(contextId, entityId, limit); // everything about one entity
+memoryRetriever.recallByType(contextId, type, limit);    // one KnowledgeType only
+memoryRetriever.recallRecent(contextId, limit);          // most recent first
+----
+
+`DefaultMemoryRetriever` implements all four. `recallAbout` is the one to reach for when the agent
+has already identified who or what it is talking about — it is more precise than a semantic query
+over the same text.
+
+==== Keep memory from rotting
+
+Memory is where accumulation hurts first: an agent whose recall is 80% stale beliefs is worse than
+one with no memory at all.
+
+Run the dream loop periodically. `DefaultDreamLoopOrchestrator` gates each pass on a threshold, so a
+quiet context does nothing:
+
+[source,java]
+----
+DreamLoopReport report = dreamLoopOrchestrator.run(contextId);
+----
+
+The passes fold sessions into durable claims, build abstractions, resolve contradictions and apply
+decay. See <<concepts-knowledge-hygiene>>.
+
+`MemoryConsolidator` is the lower-level piece if you want to compose your own cycle;
+`DefaultMemoryMaintenanceOrchestrator` is the older four-step pipeline, kept for compatibility.
+
+==== Pin what must not fade
+
+Some things should never decay out of memory — a user's name, a hard constraint, a standing
+instruction:
+
+[source,java]
+----
+propositionRepository.pin(propositionId);
+----
+
+Pinned propositions are exempt from decay-driven reclamation. Use it sparingly; every pin is a
+permanent claim on the context window.
+
+==== Serve it over HTTP
+
+`MemoryController` exposes memory at `/api/v1/contexts/{contextId}/memory` — list, search, recall by
+entity, create, fetch and delete. It is opt-in. See <<features-web-api>>.

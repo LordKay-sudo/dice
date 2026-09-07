@@ -1,0 +1,93 @@
+[[how-to-project-to-graph]]
+=== Project propositions into a graph
+
+*Prerequisites*: propositions with resolved mentions, and a `NamedEntityDataRepository`. A graph
+backend is not required to project, but is what makes traversal worth doing.
+
+Propositions are sentences. A graph is edges. Projection is the step that turns one into the other,
+and it is always rebuildable — if the graph and the propositions disagree, the propositions win.
+
+==== Pick a projector
+
+[cols="1,3", options="header"]
+|===
+| Projector | How it decides edges
+
+| `RelationBasedGraphProjector`
+| From the `Relations` declared on your `SourceAnalysisContext`. Deterministic, cheap, predictable.
+  Only produces edges for predicates you named.
+
+| `LlmGraphProjector`
+| An LLM infers edges from the claim text. Covers relationships you did not anticipate, at the cost
+  of a call per batch and less predictability.
+|===
+
+Start relation-based. Reach for the LLM projector when you find real relationships your `Relations`
+cannot express.
+
+[source,java]
+----
+var projector = new RelationBasedGraphProjector(relations, persister, policy);
+var outcome = projector.project(propositions);
+----
+
+`GraphProjectionService` wraps this for the common case; `NamedEntityDataRepositoryGraphRelationshipPersister`
+is the persister for entity repositories.
+
+==== Control what gets projected
+
+A `ProjectionPolicy` decides which propositions are eligible — typically a confidence or trust floor,
+so a weakly believed claim does not become a hard edge. `ProjectionPolicySupport` holds the shipped
+building blocks.
+
+The `ProjectionEligibilityGate` does the same job earlier, at admission time, marking a claim as
+stored but not yet worth projecting.
+
+Deciding this deliberately matters: an edge reads as a fact, even when the claim behind it was
+believed at 0.4.
+
+==== Describe the edges
+
+`RelationshipDescriptionSynthesizer` generates human-readable descriptions for projected
+relationships; `LlmRelationshipDescriptionSynthesizer` does it with an LLM. Useful when the graph is
+something people will look at rather than only traverse.
+
+==== Lineage and reconciliation
+
+Every projected edge records which propositions produced it, in a `ProjectionRecordStore`. Two
+things follow.
+
+*The stale cascade.* When a source proposition changes, the edges derived from it are marked stale
+rather than left silently wrong. You can find them, and you can see why.
+
+*Idempotent reconciliation.* `Reconciler` brings the graph back into agreement with the propositions
+without rebuilding it. Re-running projection over unchanged input is a no-op, so projection can be
+scheduled rather than orchestrated.
+
+[source,java]
+----
+var health = graphQueries.projectionHealth(contextId);   // what is stale, what is current
+reconciler.reconcile(contextId);                          // bring the graph back in line
+----
+
+The REST layer exposes the same information at
+`GET /api/v1/contexts/{contextId}/discovery/projection-health`.
+
+==== Query the result
+
+With a `GraphQueryCapable` repository:
+
+[source,java]
+----
+GraphNeighborhood around = graphQueries.neighborhood(entityId, /* depth = */ 2);
+List<GraphPath> paths   = graphQueries.paths(fromEntityId, toEntityId);
+PropositionLineage why  = graphQueries.lineage(propositionId);
+----
+
+`lineage` is the "why does this edge exist" query: it walks back from a projected edge to the
+propositions and, through grounding and provenance, to the source text.
+
+==== Emit events on projection
+
+`EventEmittingProjector` decorates any projector and publishes Spring application events as
+projections happen — the hook for cache invalidation, search reindexing, or notifying a UI.

@@ -1,0 +1,117 @@
+[[features-multi-signal-collector]]
+=== Multi-signal collector
+
+*Activation*: `embabel.dice.collector.enabled` — on unless explicitly set to `false`.
+
+*Availability*: `dice-storage-autoconfigure`. No extra infrastructure; the trace store follows your
+chosen backend.
+
+==== When to use it
+
+Use it when the same claim reaches you from more than one source and entity resolution alone has not
+collapsed the duplicates. That is most systems that ingest continuously.
+
+Turn it off when your corpus is small enough to inspect, when duplicates are genuinely rare, or
+while you are still tuning extraction — merging is much harder to undo than to postpone.
+
+==== Impact
+
+* *LLM calls*: none. Every signal is computed, not generated.
+* *Latency*: a run is proportional to the candidate pairs the pair sources produce, not to the store.
+* *Storage*: trace rows per run, retained per `detail-retention-days`.
+* *Risk*: this is the component that merges propositions. Dry-run first.
+
+==== How it decides
+
+`MultiSignalCollectorStrategy` scores each candidate pair on several signals and blends them. No
+single signal can carry a merge:
+
+[cols="1,3", options="header"]
+|===
+| Signal | What it measures
+
+| `vector`
+| Embedding similarity between the two claims.
+
+| `lexical`
+| Surface token overlap.
+
+| `entity-overlap`
+| How much the resolved entity sets agree.
+
+| `grounding-overlap`
+| Whether the claims came from the same chunks.
+
+| `provenance-overlap`
+| Whether they share evidence links.
+
+| `polarity-veto`
+| A veto, not a score: stops a claim merging with its own negation.
+|===
+
+An edge scoring at or above `match-threshold` becomes eligible to merge its endpoints. Eligible
+edges form connected components, and `CollectorSurvivorPolicy` picks which proposition in each
+component survives, absorbing the others' evidence.
+
+==== How to enable
+
+[source,yaml]
+----
+embabel:
+  dice:
+    collector:
+      enabled: true            # default
+      match-threshold: 0.6     # aggregate score needed to merge; 0.0-1.0
+      signals:
+        vector:
+          enabled: true
+          weight: 0.4
+          similarity-threshold: 0.85   # cosine floor for recall
+          top-k: 20                    # max similar members per cluster seed
+        lexical:
+          enabled: true
+          weight: 0.2
+        entity-overlap:
+          enabled: true
+          weight: 0.2
+        grounding-overlap:
+          enabled: true
+        provenance-overlap:
+          enabled: false
+        polarity-veto:
+          enabled: true
+      sweep:
+        delta: false           # property binding only; no runner behind it yet
+      trace:
+        enabled: true
+        detail-retention-days: 30
+----
+
+A null `weight` means "use the scorer's own default", which is not the same as zero — the nullable
+type exists so "unset" and "set to the default number" stay distinguishable.
+
+`similarity-threshold` and `top-k` apply to the vector signal only.
+
+==== Tuning
+
+Raise `match-threshold` if you see wrong merges. Lower it, or widen the vector signal's
+`similarity-threshold` and `top-k`, if duplicates survive.
+
+Prefer tuning here over loosening entity resolution: reclamation is auditable and reversible in
+review, and a bad resolution is neither.
+
+==== Example
+
+[source,java]
+----
+// Always start here.
+var dryRun = collectorRunner.run(contextId, /* dryRun = */ true);
+dryRun.getDecisions().forEach(System.out::println);
+
+// Only once the decisions look right.
+var live = collectorRunner.run(contextId, false);
+----
+
+Every live run is recorded to `CollectorRecordStore`; the detailed edges, components and decisions go
+to a `CollectorTraceStore` — `InMemoryCollectorTraceStore` by default, `DrivineCollectorTraceStore`
+on the graph backend.

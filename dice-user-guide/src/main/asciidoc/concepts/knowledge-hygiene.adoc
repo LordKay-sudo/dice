@@ -1,0 +1,106 @@
+[[concepts-knowledge-hygiene]]
+=== Knowledge hygiene
+
+A store that only ever accumulates gets worse over time. DICE has three interventions, at three
+different points in the life of a claim: gates keep bad claims out, reclamation removes claims that
+stopped earning their place, and consolidation rewrites what is left into something more useful.
+
+==== 1. Admission gates
+
+Gates run on pipeline output *before* the caller persists anything. They are the cheapest
+intervention, because nothing has been written yet.
+
+[cols="1,3", options="header"]
+|===
+| Gate | What it rejects
+
+| `ConfidenceGate`
+| Claims below a raw confidence floor.
+
+| `EvidenceFloorGate`
+| Claims with too little evidence behind them.
+
+| `TrustGate`
+| Claims whose trust score — source authority folded into confidence — is too low.
+
+| `MergeCandidateGate`
+| Routes claims that duplicate something already stored, rather than admitting a second copy.
+
+| `ConflictClassificationGate`
+| Routes claims that contradict something already stored.
+
+| `ProjectionEligibilityGate`
+| Admits the claim but marks it as not yet worth projecting.
+|===
+
+Compose them with `ExtractionGatePipeline`, and wrap any of them in `ObservableGate` to see what is
+being rejected and why. A gate you cannot observe is a gate you will eventually mis-tune.
+
+==== 2. Reclamation — the collector
+
+Reclamation is mark-and-sweep over what is already stored. `CollectorRunner` walks the store, a
+`CollectorStrategy` marks candidates, and a `SweepPolicy` decides each marked proposition's fate.
+
+The vocabulary is small and worth knowing: a `PropositionMark` carries a `MarkReason`, and the
+policy produces a `SweepAction`.
+
+Two shipped strategies:
+
+* `DecayCollectorStrategy` — marks claims whose effective confidence has fallen far enough.
+* `DuplicateCollectorStrategy` — marks claims that say the same thing as another.
+
+The `MultiSignalCollectorStrategy` is the production duplicate matcher, blending several signals
+rather than trusting any one of them. See <<features-multi-signal-collector>>.
+
+Two things make reclamation safe to run: it has a *dry-run* mode that reports what it would do
+without doing it, and every live run is recorded to a `CollectorRecordStore`, so a surprising result
+is explainable after the fact. Run it dry first. Always.
+
+Pinned propositions are exempt.
+
+==== 3. Consolidation — the dream loop
+
+Consolidation rewrites what survives into something more useful. `DreamLoopOrchestrator` composes
+passes, and `DefaultDreamLoopOrchestrator` gates each pass on a threshold, so a quiet store does no
+work.
+
+The four shipped passes:
+
+[cols="1,3", options="header"]
+|===
+| Pass | What it does
+
+| `SessionConsolidationPass`
+| Folds a session's episodic detail into durable claims.
+
+| `AbstractionPass`
+| Builds higher-`level` propositions that generalise groups of level-0 claims.
+
+| `ContradictionResolutionPass`
+| Resolves claims that contradict one another, adjusting status rather than deleting.
+
+| `DecaySweepPass`
+| Applies decay and the resulting lifecycle transitions.
+|===
+
+A run produces a `DreamLoopReport` describing what each pass did.
+
+`DefaultMemoryMaintenanceOrchestrator` is the older four-step pipeline. Prefer the dream loop for
+new work.
+
+==== Decay, not deletion
+
+Underneath all three sits the same principle: DICE fades beliefs rather than erasing them. Decay
+lowers effective confidence, status records that a claim was superseded or contradicted, and the
+evidence stays attached. Hard deletion of `STALE` propositions is available but off by default —
+`embabel.dice.store.decay.prune-stale` is `false` — because most applications would rather answer
+"why did you stop believing that?" than reclaim the rows.
+
+.Try it now
+[source,java]
+----
+// See what reclamation would do, without doing it.
+var dryRun = collectorRunner.run(contextId, /* dryRun = */ true);
+System.out.println(dryRun);
+----
+Read the marks and their reasons before you ever run this live.

@@ -1,0 +1,72 @@
+[[features-vector-index]]
+=== Vector index on Neo4j
+
+*Activation*: `embabel.dice.store.vector-index.enabled=true` — on by default, and only takes effect
+with `embabel.dice.store.type=graph` and an `Ai` bean present.
+
+*Availability*: `dice-storage-autoconfigure`. No extra infrastructure beyond the Neo4j you already
+need for the graph backend.
+
+==== When to use it
+
+Leave it on. Semantic retrieval over propositions is what makes "what do we know that is relevant to
+this?" answerable without an exact match, and it is also what lets `VectorCandidateSearcher` resolve
+aliases that share no characters with the canonical name.
+
+Turn it off when your Neo4j deployment does not support vector indexes, when you are certain all
+retrieval is by entity and `ContextId`, or when the index build on a large existing store is
+something you want to schedule rather than have happen at startup.
+
+==== Impact
+
+* *Startup*: the index is created if absent. On a large existing store this takes time.
+* *Write*: each proposition is embedded on save — an embedding call per proposition.
+* *Storage*: one embedding vector per proposition.
+* *Read*: similarity search becomes a native index lookup rather than a scan.
+
+==== How to enable
+
+[source,yaml]
+----
+embabel:
+  dice:
+    store:
+      type: graph
+      vector-index:
+        enabled: true    # the default
+----
+
+To disable:
+
+[source,yaml]
+----
+embabel:
+  dice:
+    store:
+      vector-index:
+        enabled: false
+----
+
+==== What is configurable
+
+Only `enabled`. The index's label, property, name and similarity function are fixed by the
+`@VectorIndex` annotation on `PropositionNode.embedding` and live as constants on
+`DrivinePropositionRepository`.
+
+This is deliberate: those values must agree between the index definition and every query that uses
+it, and making them configurable would create a way to have them disagree.
+
+The vector dimension comes from the configured `EmbeddingService`, so the index matches whatever
+embedding model your `Ai` bean is using.
+
+==== Example
+
+[source,java]
+----
+if (propositionRepository instanceof VectorSearchCapable v) {
+    var similar = v.findSimilar(queryText, contextId, 10);
+}
+----
+
+With the index disabled, `VectorSearchCapable` operations fall back to the default implementations
+expressed over the base primitives — correct, but a scan.

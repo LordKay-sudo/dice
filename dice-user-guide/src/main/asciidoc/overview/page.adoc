@@ -1,0 +1,20 @@
+[[overview]]
+== Overview
+:sectids:
+:sectanchors:
+
+DICE — *Domain-Integrated Context Engineering* — is a knowledge substrate for JVM applications.
+It turns text into confidence-weighted natural-language *propositions*, resolves the entity mentions
+inside them to canonical identifiers, and then projects those propositions into whatever
+representation a task needs: a Neo4j graph, a Prolog fact base, vector embeddings, agent working
+memory, or a human-readable report.
+
+Propositions are the single system of record. Everything else is a derived view.
+
+include::what-is-dice.adoc[]
+
+include::architecture.adoc[]
+
+include::modules.adoc[]
+
+include::glossary.adoc[]

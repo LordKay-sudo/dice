@@ -1,0 +1,138 @@
+[[reference-extension-points]]
+=== Extension points
+
+The interfaces DICE expects you to implement. Everything here has a shipped default, so you extend
+only what your domain actually needs.
+
+==== Belief and conflict — `com.embabel.dice.spi`
+
+[cols="1,3", options="header"]
+|===
+| SPI | What you decide
+
+| `TrustScorer`
+| How much a claim is worth, given its confidence and where it came from.
+  `AuthorityWeightedTrustScorer` is the shipped default.
+
+| `AuthorityResolver` / `Authority`
+| Which authority tier a source belongs to. Feeds trust scoring and query-time filtering.
+
+| `ConflictDetector`
+| Whether two claims conflict, and how — the `ConflictType` vocabulary distinguishes supersession
+  from contradiction.
+
+| `StatusTransitionPolicy`
+| When a proposition changes `PropositionStatus`.
+
+| `SweepPolicy`
+| What happens to a marked proposition. `StatusTransitionSweepPolicy` and `MergingSweepPolicy` ship;
+  the vocabulary is `SweepAction`, `PropositionMark` and `MarkReason`.
+
+| `CollectorTraceStore`
+| Where reclamation decision traces are persisted. `InMemoryCollectorTraceStore` and
+  `DrivineCollectorTraceStore` ship.
+|===
+
+==== Extraction and resolution
+
+[cols="1,3", options="header"]
+|===
+| SPI | What you decide
+
+| `PropositionExtractor`
+| How text becomes claims. `LlmPropositionExtractor` ships. Must be thread-safe if you use a
+  concurrent `ExtractionExecutionStrategy`.
+
+| `PropositionReviser`
+| How a new claim is reconciled against stored ones. `LlmPropositionReviser` ships.
+
+| `EntityResolver`
+| How a mention becomes an entity. Several ship — see <<concepts-entity-resolution>>.
+
+| `CandidateSearcher`
+| How candidate entities are recalled for a mention. This is the usual place to add a
+  domain-specific strategy.
+
+| `CandidateBakeoff`
+| How one candidate is chosen from several. `LlmCandidateBakeoff` ships.
+
+| `MentionFilter`
+| Which mentions are worth resolving at all.
+
+| `ExtractionGate`
+| Which extracted propositions are admitted. `StandardGates` holds the shipped set.
+
+| `ExtractionExecutionStrategy`
+| How the extraction stage is dispatched. Serial, parallel and batched ship.
+|===
+
+==== Storage
+
+[cols="1,3", options="header"]
+|===
+| SPI | What you decide
+
+| `PropositionStore`
+| The base port: CRUD plus a composable query. Implement this to add a backend.
+
+| `PropositionRepository`
+| `PropositionStore` plus the optional capabilities. Implement only the capabilities you genuinely
+  support — defaults cover the rest.
+
+| `DecayManager`
+| How decay is applied. `InMemoryDecayManager` and `GraphDecayManager` ship.
+
+| `ChunkHistoryStore`
+| What has already been processed, for incremental analysis.
+
+| `ProjectionRecordStore`
+| Edge lineage, for the stale cascade and reconciliation.
+
+| `CollectorRecordStore`
+| The reclamation audit trail.
+
+| `IngestionLedger`
+| The content-hash record that makes re-ingestion a no-op.
+
+| `IngestionHandler`
+| How an artifact becomes chunks. `TextIngestionHandler` ships.
+|===
+
+==== Projection and output
+
+[cols="1,3", options="header"]
+|===
+| SPI | What you decide
+
+| `GraphProjector`
+| Which edges propositions produce. Relation-based and LLM-based ship.
+
+| `ProjectionPolicy`
+| Which propositions are eligible to be projected at all.
+
+| `RelationshipDescriptionSynthesizer`
+| Human-readable descriptions for projected edges.
+
+| `PrologProjector`
+| Propositions as Prolog facts. Experimental.
+
+| `MemoryProjector` / `MemoryRetriever`
+| How propositions map to agent memory, and how memory is recalled.
+
+| `CollectorStrategy`
+| Which propositions get marked for reclamation. `MultiSignalCollectorStrategy` is the production
+  duplicate matcher.
+
+| `ReportProjector` / `RationaleProjector`
+| Human-readable output. In `dice-report`.
+
+| `SemanticLinkDiscoverer`
+| Surprising connections between claims. `TwoHopSemanticLinkDiscoverer` ships.
+|===
+
+==== Java interop
+
+Kotlin `infix` factory methods on `PropositionQuery` have Java-friendly `withXxx` and
+`againstContext` equivalents. `ContextId` is a value class, so Java code uses `getContextIdValue()`.
+`Proposition.create(...)` is the Java-friendly factory. `@JvmOverloads` is applied where defaults
+would otherwise be unreachable from Java.

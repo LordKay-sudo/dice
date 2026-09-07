@@ -1,0 +1,64 @@
+[[overview-glossary]]
+=== Glossary
+
+The rest of this guide assumes these terms.
+
+Proposition::
+A single natural-language claim, with a confidence, an importance, a decay factor, a status, a
+`ContextId`, the entity mentions it contains, and links back to the source material it came from.
+The system of record.
+
+ContextId::
+The scope every proposition belongs to — a user, a tenant, a conversation, a document set. It is a
+Kotlin value class; Java callers use `getContextIdValue()`. Every query starts from a `ContextId` by
+design, so nothing accidentally loads the whole store.
+
+Confidence and effective confidence::
+`confidence` is what the LLM assigned at extraction time and never changes on its own.
+`effectiveConfidence()` folds in decay and is what you rank and filter on.
+
+Decay::
+A 0–1 factor that erodes a proposition's effective confidence as it ages, anchored on
+`contentRevised`. Administrative changes — status, pinning, grounding — touch `metadataRevised` only
+and never reset the clock. Decay replaces deletion: a belief fades rather than vanishing.
+
+Mention::
+A span of text in a proposition that names an entity, before or after it has been matched to a
+canonical identifier.
+
+Entity resolution::
+Matching a mention to an existing entity or minting a new one. The shipped `EscalatingEntityResolver`
+climbs a ladder — exact match, heuristic, embedding, LLM verification, LLM bake-off — and stops at
+the cheapest level that succeeds.
+
+Revision::
+Comparing a newly extracted proposition against what is already stored, and classifying it as new,
+merged, reinforced or contradicted.
+
+Projection::
+A derived, typed view over propositions: a graph, a Prolog fact base, agent memory, a report. A
+projection is always rebuildable from the propositions.
+
+Grounding::
+The link from a proposition back to the chunks it was extracted from, so "why do you believe this?"
+has an answer.
+
+Provenance::
+Richer evidence links than grounding: a `ProvenanceEntry` records where a claim came from and,
+through `SourceLocator`, how to get back to it.
+
+Admission gate::
+A check that runs on pipeline output *before* the caller persists it — a confidence floor, a trust
+threshold, a projection-eligibility rule.
+
+Reclamation (the collector)::
+The mark-and-sweep pass that finds duplicate or stale propositions and decides each one's fate,
+with an audit trail.
+
+Consolidation (the dream loop)::
+A composed set of passes — session consolidation, abstraction, contradiction resolution, decay sweep
+— that runs periodically to keep a store coherent.
+
+Authority::
+A tier assigned to a source, used by `AuthorityWeightedTrustScorer` to weight what a claim from that
+source is worth, and available as a query-time filter.

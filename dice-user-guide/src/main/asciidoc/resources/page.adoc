@@ -1,0 +1,44 @@
+[[resources]]
+== Resources
+:sectids:
+:sectanchors:
+
+=== Repositories
+
+* https://github.com/embabel/dice[embabel/dice] — this project.
+* https://github.com/embabel/embabel-agent[embabel/embabel-agent] — the agent framework DICE builds on.
+* https://github.com/embabel/impromptu[embabel/impromptu] — a classical-music chatbot using DICE in
+  production.
+
+=== Design notes
+
+The contributor-facing rationale lives in `docs/design/` in the repository, with an index at
+`docs/design/INDEX.md`. Start with `architecture.md` for a system-level map, then follow to the
+extraction pipeline, the proposition lifecycle, knowledge hygiene, graph projection, retrieval and
+discovery, durable storage, and the event model.
+
+`AGENTS.md` at the repository root is the navigation guide for working *on* DICE rather than with
+it.
+
+=== Background reading
+
+Johnson, R. (2025). _Context Engineering Needs Domain Understanding_. Medium.
+https://medium.com/@springrod/context-engineering-needs-domain-understanding-b4387e8e4bf8
+
+_General User Models_ (GUM), Stanford and Microsoft. https://arxiv.org/abs/2505.10831 — the
+propose/retrieve/revise architecture DICE's proposition model is derived from.
+
+https://en.wikipedia.org/wiki/Blackboard_(design_pattern)[The Blackboard pattern] — the shared-memory
+architecture the agent framework's execution model uses.
+
+=== Technology
+
+* *tuProlog (2p-kt)* — pure Kotlin Prolog engine, used for inference.
+* *Drivine* — Neo4j access for the graph backend.
+* *Spring Framework and Spring Boot* — dependency injection, auto-configuration, optional web support.
+* *Embabel Agent* — LLM integration.
+* *Kotlin* — the implementation language, with Java-friendly APIs throughout.
+
+=== License
+
+Apache License, Version 2.0. (C) 2024-2026 Embabel Pty Ltd.

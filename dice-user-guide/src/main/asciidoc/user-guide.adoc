@@ -1,0 +1,22 @@
+[[user-guide]]
+ifndef::imagesdir[]
+:imagesdir: images
+endif::[]
+
+include::overview/page.adoc[]
+
+include::quickstart/page.adoc[]
+
+include::concepts/page.adoc[]
+
+include::how-to/page.adoc[]
+
+include::features/page.adoc[]
+
+include::reference/page.adoc[]
+
+include::production/page.adoc[]
+
+include::support/page.adoc[]
+
+include::resources/page.adoc[]

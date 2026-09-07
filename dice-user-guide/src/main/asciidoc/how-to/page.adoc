@@ -1,0 +1,25 @@
+[[how-to]]
+== How-to
+:sectids:
+:sectanchors:
+
+Task-shaped pages, titled by what you want rather than by what the code is called. Each states its
+prerequisites first.
+
+include::extract-from-documents.adoc[]
+
+include::analyze-conversations.adoc[]
+
+include::tune-entity-resolution.adoc[]
+
+include::query-propositions.adoc[]
+
+include::project-to-graph.adoc[]
+
+include::agent-memory.adoc[]
+
+include::oracle.adoc[]
+
+include::choose-a-backend.adoc[]
+
+include::observe-and-react.adoc[]

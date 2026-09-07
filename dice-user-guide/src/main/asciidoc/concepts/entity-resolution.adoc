@@ -1,0 +1,133 @@
+[[concepts-entity-resolution]]
+=== Entity resolution
+
+Extraction produces *mentions* — spans of text that name something. Resolution decides whether a
+mention refers to an entity you already know, or to one that should be minted.
+
+Getting this wrong is the most expensive failure mode in a knowledge substrate: an unresolved
+duplicate splits everything you know about one thing into two half-graphs, and a wrong merge welds
+two things into one.
+
+==== The escalating resolver
+
+`EscalatingEntityResolver` climbs a ladder and stops at the cheapest rung that works. The rung it
+stopped at is reported back as a `ResolutionLevel`:
+
+[cols="1,2,1", options="header"]
+|===
+| Level | How it matches | LLM call
+
+| `EXACT_MATCH`
+| Exact name match against the repository.
+| No
+
+| `HEURISTIC_MATCH`
+| Normalised name, then fuzzy and partial name matching.
+| No
+
+| `EMBEDDING_MATCH`
+| High-confidence embedding similarity.
+| No
+
+| `LLM_VERIFICATION`
+| One candidate, verified yes/no by an LLM.
+| Yes
+
+| `LLM_BAKEOFF`
+| Several candidates, an LLM picks the best.
+| Yes
+
+| `NO_MATCH`
+| Nothing matched at any level.
+| —
+|===
+
+Each attempt returns a `LevelResult` carrying the level, the resolution, a confidence, and how many
+candidates were considered — which is what you look at when tuning.
+
+Construct one with the shipped searcher chain:
+
+[source,java]
+----
+// Full chain, including the vector searcher.
+var resolver = EscalatingEntityResolver.create(entityRepository, candidateBakeoff);
+
+// Same, minus the vector searcher — for stores with no vector index.
+var resolver = EscalatingEntityResolver.withoutVector(entityRepository, candidateBakeoff);
+----
+
+Passing `null` for the bake-off means ambiguous cases mint a new entity rather than asking an LLM.
+
+==== The searchers
+
+Candidate recall is pluggable. `CandidateSearcher` implementations ship for exact name, normalised
+name, partial name, fuzzy name, id, vector similarity, and `AgenticCandidateSearcher`, which lets an
+LLM go looking. `DefaultCandidateSearchers` assembles the standard chains.
+
+To add a strategy, implement `CandidateSearcher` and compose it into the resolver's chain.
+
+==== Composing resolvers
+
+Resolvers compose, and the order is the policy:
+
+[cols="1,3", options="header"]
+|===
+| Resolver | Behaviour
+
+| `KnownEntityResolver`
+| Resolves against entities you handed in on the context — the current user, say. Put it first.
+
+| `EscalatingEntityResolver`
+| The ladder above, against the repository.
+
+| `InMemoryEntityResolver`
+| Remembers what this run has already resolved, so chunk 7 recognises what chunk 2 minted.
+
+| `ChainedEntityResolver`
+| Tries each resolver in order and takes the first hit.
+
+| `AlwaysCreateEntityResolver`
+| Mints unconditionally. Useful in tests and in throwaway contexts.
+|===
+
+`PropositionPipeline.process(...)` wraps your resolver with an `InMemoryEntityResolver`
+automatically — but only when `mintNewEntities` is on. With minting off the wrapper is skipped
+deliberately: remembering an entity that will never be created would produce mentions resolved to
+ids that do not exist.
+
+==== Why resolution is serial
+
+Extraction is stateless per chunk and can be dispatched concurrently. Resolution is not: it reads
+and writes shared identity state, and running it concurrently is how you get two entities for one
+thing. DICE keeps resolution serial regardless of the `ExtractionExecutionStrategy` in force, so
+cross-chunk identity holds however extraction was dispatched. See
+<<features-concurrent-extraction>>.
+
+==== Mention filtering
+
+Not every mention deserves resolution. A `MentionFilter` runs before resolution and drops
+low-quality spans — vague references, overly long spans, anything the schema says cannot be an
+entity. Filtering here is cheaper than resolving and then reclaiming.
+
+Shipped filters include `SchemaValidatedMentionFilter`, the context-aware filters in
+`ContextAwareMentionFilters`, and `ObservableMentionFilter`, which wraps another filter to report
+what it rejected.
+
+[source,java]
+----
+pipeline = pipeline.withMentionFilter(mentionFilter);
+----
+
+.Try it now
+[source,java]
+----
+var chunk = new Chunk("c1",
+        "Ada Lovelace met Babbage in 1833. Lovelace later wrote the first algorithm.");
+var results = pipeline.process(List.of(chunk), context);
+
+results.getPropositions().stream()
+        .flatMap(p -> p.getMentions().stream())
+        .forEach(m -> System.out.println(m.getText() + " -> " + m.getResolvedId()));
+----
+"Ada Lovelace" and "Lovelace" should resolve to the same id. If they do not, that is the tuning
+problem <<how-to-tune-entity-resolution>> exists for.
