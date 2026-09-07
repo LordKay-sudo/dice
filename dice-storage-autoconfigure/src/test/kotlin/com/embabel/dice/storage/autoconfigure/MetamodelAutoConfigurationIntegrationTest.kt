@@ -161,9 +161,8 @@ class MetamodelAutoConfigurationIntegrationTest {
      * auto-configured stores and observed-schema source really do line up with it.
      *
      * Drivine's `SchemaManager` writes a `_DrivineSchema` inventory node whenever it applies a
-     * `SchemaCatalog`, and that label is currently reported as drift, since `DiceOwnedSchema`
-     * describes dice's own labels and knows nothing about Drivine's. Fixing it is a `dice-storage`
-     * change and there is no assertion for it here.
+     * `SchemaCatalog`. `DrivineObservedSchemaSource` keeps that label out of the observed types
+     * through `INFRASTRUCTURE_LABELS`, and the second assertion below holds it to that.
      */
     @Test
     fun `governance never reports its own bookkeeping as drift`() {
@@ -172,6 +171,7 @@ class MetamodelAutoConfigurationIntegrationTest {
 
         assertThat(second.driftedEntityTypes).contains("Ghost")
         assertThat(second.driftedEntityTypes).doesNotContainAnyElementsOf(MetamodelSchema.LABELS)
+        assertThat(second.driftedEntityTypes).doesNotContain("_DrivineSchema")
     }
 }
 
