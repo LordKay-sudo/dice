@@ -27,8 +27,6 @@ import org.junit.jupiter.api.Assertions.assertDoesNotThrow
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertNull
-import org.junit.jupiter.api.Assertions.assertThrows
-import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
 /**
@@ -201,29 +199,27 @@ class PropositionRepositoryDelegationTest {
     }
 
     /**
-     * The event-emitting decorator wraps a plain [PropositionRepository], so whether it can answer
-     * depends on the delegate it was handed. It carries the capability type either way, which makes
-     * [SourceRevisionQueryCapable.supportsSourceRevisionQueries] the runtime truth, and a call that
-     * gets past the flag names the delegate that cannot answer.
+     * The event-emitting decorator wraps a plain [PropositionRepository], and only implements
+     * [SourceRevisionQueryCapable] when [EventEmittingPropositionRepository.wrapping] was handed a
+     * delegate that does. A wrapper built over a capable delegate answers `as?` with itself and
+     * forwards to the delegate; a wrapper built over a plain repository answers `as?` with null,
+     * the same honest absence the delegate itself would report.
      */
     @Test
-    fun `the decorator reports and refuses what its delegate cannot answer`() {
+    fun `the decorator carries the capability only when its delegate does`() {
         val capableDelegate = StringSourceOverrideRepository()
-        val capableDecorator = EventEmittingPropositionRepository(capableDelegate, DiceEventListener.DEV_NULL)
-        assertEquals(true, capableDecorator.supportsSourceRevisionQueries)
+        val capableWrapper = EventEmittingPropositionRepository.wrapping(capableDelegate, DiceEventListener.DEV_NULL)
+        val capableRevisionQueries = capableWrapper as? SourceRevisionQueryCapable
+        assertNotNull(capableRevisionQueries, "a wrapper over a capable delegate must carry the capability")
         assertEquals(
             capableDelegate.sourceKeyResult,
-            capableDecorator.findBySourceKey(contextId, "uri:https://example.com/source"),
+            capableRevisionQueries!!.findBySourceKey(contextId, "uri:https://example.com/source"),
         )
 
-        val plainDecorator = EventEmittingPropositionRepository(MinimalRepository(), DiceEventListener.DEV_NULL)
-        assertEquals(false, plainDecorator.supportsSourceRevisionQueries)
-        val failure = assertThrows(UnsupportedOperationException::class.java) {
-            plainDecorator.findBySourceKey(contextId, "uri:https://example.com/source")
-        }
-        assertTrue(
-            failure.message!!.contains("MinimalRepository"),
-            "the refusal names the delegate that cannot answer: ${failure.message}",
+        val plainWrapper = EventEmittingPropositionRepository.wrapping(MinimalRepository(), DiceEventListener.DEV_NULL)
+        assertNull(
+            plainWrapper as? SourceRevisionQueryCapable,
+            "a wrapper over a plain repository must not satisfy the capability probe",
         )
     }
 }
