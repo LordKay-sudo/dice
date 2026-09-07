@@ -375,7 +375,8 @@ class DrivinePropositionRepository(
                         r.chunkId = ${'$'}chunkId,
                         r.startOffset = ${'$'}startOffset,
                         r.endOffset = ${'$'}endOffset,
-                        r.contentHash = ${'$'}contentHash
+                        r.contentHash = ${'$'}contentHash,
+                        r.display = ${'$'}sourceDisplay
                     """.trimIndent()
                 ).bind(params),
             )
@@ -389,11 +390,12 @@ class DrivinePropositionRepository(
      * each other's node, so the incoming identity is compared against what is stored and a mismatch
      * fails the write and leaves the shared node alone.
      *
-     * Every property here is set once, on create — `display` included. The `:Source` node is global:
-     * one locator key is one node across every context that cites it. A refresh-on-write `display`
-     * therefore leaked one context's label into all the others, because whichever writer ran last
-     * owned the label everybody read. Write-once keeps the shared node stable while each writer's
-     * own evidence still lands on its own `DERIVED_FROM` edge.
+     * Every property here is set once, on create, `display` included, so a reader of the bare node
+     * still sees a label. The `:Source` node is global: one locator key is one node across every
+     * context that cites it, so a label set here is shared, not owned by any one writer. The label a
+     * writer actually supplied travels on that writer's own `DERIVED_FROM` edge (see
+     * `appendProvenance`), and provenance reads take `display` from the edge, not the node, so no
+     * context ever sees another context's label.
      */
     @Suppress("UNCHECKED_CAST")
     private fun upsertSource(source: SourceNode, params: Map<String, Any?>) {
@@ -441,7 +443,8 @@ class DrivinePropositionRepository(
                   AND ((r.endOffset IS NULL AND ${'$'}endOffset IS NULL) OR r.endOffset = ${'$'}endOffset)
                   AND ((r.contentHash IS NULL AND ${'$'}contentHash IS NULL) OR r.contentHash = ${'$'}contentHash)
                 WITH r LIMIT 1
-                SET r.entryKey = ${'$'}entryKey
+                SET r.entryKey = ${'$'}entryKey,
+                    r.display = ${'$'}sourceDisplay
                 RETURN count(r) AS adopted
                 """.trimIndent()
             ).bind(params).transform(Long::class.java)
@@ -740,7 +743,7 @@ class DrivinePropositionRepository(
                     sourceRevision: r.sourceRevision,
                     sourceKey: s.key,
                     sourceKind: s.kind,
-                    sourceDisplay: s.display,
+                    sourceDisplay: coalesce(r.display, s.display),
                     sourceUri: s.uri,
                     sourcePath: s.path,
                     sourceContentHash: s.contentHash,

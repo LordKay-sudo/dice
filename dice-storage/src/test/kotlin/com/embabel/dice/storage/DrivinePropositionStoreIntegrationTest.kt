@@ -917,13 +917,14 @@ class DrivinePropositionStoreIntegrationTest {
     /**
      * A `:Source` node is global: one locator key is one node, shared by every context that cites it.
      * Its `display` label used to be refreshed on every write, so whichever writer ran last owned the
-     * label everybody else read — one context's presentation leaking into all the others.
+     * label everybody else read, one context's presentation leaking into all the others. `display`
+     * now travels on each writer's own `DERIVED_FROM` edge, so provenance reads take it from there.
      *
-     * Two writers, same locator key, different labels. The second writer's evidence must land in
-     * full while the first writer's label survives untouched.
+     * Two writers, same locator key, different labels. Each context must read back its own label,
+     * and the two writers still share one `:Source` node.
      */
     @Test
-    fun `a second writer cannot repaint a shared Source display`() {
+    fun `each context reads back its own Source display`() {
         val uri = "https://example.com/shared-display"
         val firstWriter = UriLocator(uri, display = "First writer label")
         val secondWriter = UriLocator(uri, display = "Second writer label")
@@ -938,8 +939,15 @@ class DrivinePropositionStoreIntegrationTest {
 
         assertEquals(
             "First writer label",
-            storedSourceDisplay(firstWriter.key()),
-            "display is write-once: the first writer owns the shared label",
+            repository.findBySourceRevision(ContextId("ctx-display-a"), SourceRevisionRef(firstWriter.key(), "r1"))
+                .single().provenanceEntries.single().locator.display,
+            "ctx-display-a reads back its own writer's label",
+        )
+        assertEquals(
+            "Second writer label",
+            repository.findBySourceRevision(ContextId("ctx-display-b"), SourceRevisionRef(secondWriter.key(), "r2"))
+                .single().provenanceEntries.single().locator.display,
+            "ctx-display-b reads back its own writer's label, not ctx-display-a's",
         )
         assertEquals(
             1L,
@@ -952,28 +960,9 @@ class DrivinePropositionStoreIntegrationTest {
             "both writers still share one Source node",
         )
 
-        assertEquals(
-            listOf(first.id),
-            repository.findBySourceRevision(ContextId("ctx-display-a"), SourceRevisionRef(firstWriter.key(), "r1"))
-                .map { it.id },
-            "the first writer's evidence is queryable",
-        )
-        assertEquals(
-            listOf(second.id),
-            repository.findBySourceRevision(ContextId("ctx-display-b"), SourceRevisionRef(secondWriter.key(), "r2"))
-                .map { it.id },
-            "the second writer's evidence landed in full",
-        )
+        assertEquals("r1", repository.provenanceOf(first.id).single().sourceRevision)
         assertEquals("r2", repository.provenanceOf(second.id).single().sourceRevision)
     }
-
-    @Suppress("UNCHECKED_CAST")
-    private fun storedSourceDisplay(sourceKey: String): String? =
-        (persistenceManager.query(
-            QuerySpecification
-                .withStatement("MATCH (s:Source {key: \$sourceKey}) RETURN {display: s.display} AS row")
-                .bind(mapOf("sourceKey" to sourceKey)),
-        ) as List<Map<String, Any?>>).single()["display"] as String?
 
     private fun evidence(locator: UriLocator, revision: String?): ProvenanceEntry =
         ProvenanceEntry(locator = locator, sourceRevision = revision)

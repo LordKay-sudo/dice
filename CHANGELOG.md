@@ -405,6 +405,10 @@ and the consumer PRs that deliver it).
   matching revisionless entry is written. The source queries carry no index hint, so they plan on a
   store that never adopted the optional `(contextId, text)` uniqueness constraint. Pipeline,
   collector, and REST behavior are unchanged; those arrive in the following Wave A slices.
+- A source's display label is stored per provenance edge, in `dice-storage`, and read from there.
+  Contexts sharing one `:Source` node no longer share a label: each writer's `DERIVED_FROM` edge
+  carries the label it supplied, and a provenance read takes `display` from the edge it belongs to.
+  Rows written before this change have no edge-level `display` and fall back to the node's label.
 - Length ceilings on the externally supplied strings that become stored identity, in
   `SourceIdentityBounds`: `MAX_SOURCE_KEY_LENGTH` (2048), `MAX_SOURCE_REVISION_LENGTH` (1024),
   `MAX_CHUNK_ID_LENGTH` (512), and `MAX_CONTENT_HASH_LENGTH` (256).
