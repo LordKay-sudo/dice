@@ -21,14 +21,25 @@ import org.drivine.query.QuerySpecification
 import org.junit.jupiter.api.AfterEach
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
+import org.springframework.test.context.DynamicPropertyRegistry
+import org.springframework.test.context.DynamicPropertySource
 
 /**
  * Runs the [AbstractPropositionStoreContractTest] suite against the Neo4j-backed
  * [DrivinePropositionRepository] (testcontainer). This is the half that catches a graph backend
  * silently disagreeing with the in-memory contract — substitutability enforced, not assumed.
+ *
+ * Uses the shared [Neo4jTestContainer]; see that class for why Drivine's built-in testcontainer
+ * is bypassed.
  */
 @SpringBootTest(classes = [TestApplication::class])
 class DrivinePropositionStoreContractIntegrationTest : AbstractPropositionStoreContractTest() {
+
+    companion object {
+        @JvmStatic
+        @DynamicPropertySource
+        fun neo4jProperties(registry: DynamicPropertyRegistry) = Neo4jTestContainer.registerProperties(registry)
+    }
 
     @Autowired
     private lateinit var repository: DrivinePropositionRepository

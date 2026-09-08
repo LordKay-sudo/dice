@@ -1,0 +1,347 @@
+# Changelog
+
+Notable changes to DICE. Each entry states its compatibility impact on consumers
+(anything tracking `0.2.0-SNAPSHOT`): **additive** (safe to
+pick up), **behavioral** (same API, different runtime behavior — read the note),
+or **breaking** (consumer change required; the entry links the migration notes
+and the consumer PRs that deliver it).
+
+## Unreleased
+
+### Added
+
+- `dice-metamodel` module, first slice of schema versioning: `MetamodelVersion`
+  content-hash stamping with per-type governance selection, the declared-schema
+  opt-in seam, and the `MetamodelVersionStore` contract. Pure JVM.
+  **Compatibility: additive.** New module; no existing API touched.
+
+- Declared renames in `dice-metamodel`. **EXPERIMENTAL** (shape may change
+  before 1.0): `SchemaAliases`, `PropertySignature.aliases`, and
+  `MetamodelVersion.entityTypeAliases`. A declaration states the names a type or
+  property used to go by, so a later comparison pairs a rename instead of
+  reading it as a removal and an addition.
+  **Compatibility: additive.** `contentHash` is unchanged for any schema that
+  declares no aliases — the new hash blocks serialize only when non-empty, and
+  the pinned golden digest is asserted unchanged, including for a stamp rebuilt
+  through the public constructor. The new constructor parameters carry
+  `@JvmOverloads`, so the existing `PropertySignature(String, Kind, String,
+  Cardinality)` and `MetamodelVersion(String, List, Map, Map, List)` descriptors
+  survive. `SchemaAliases` reaches `MetamodelVersion.from` and
+  `DeclaredSchema.from` through separate overloads that take it as a required
+  parameter, which leaves the shipped one- and two-argument forms and their
+  Kotlin `from$default` synthetics byte-identical; widening those functions with
+  a third defaulted parameter would have replaced
+  `DeclaredSchema.Companion.from$default(Companion, DataDictionary,
+  GovernedTypeSelector, int, Object)` with a wider descriptor and broken any
+  caller already compiled against it. `MetamodelJavaCompatTest` calls every
+  static form. The changed Kotlin synthetic constructor, `copy`, `copy$default`
+  and `componentN` signatures on `PropertySignature` are the accepted boundary:
+  Kotlin callers recompile, and no consumer holds a compiled reference to them.
+
+- Schema attribution mechanism: per-proposition version is answered through the
+  run that produced the proposition (PRODUCED_BY_RUN). The run record carries
+  the declared schema's content hash, resolved by the extraction coordinator from
+  the host's DeclaredSchemaSource. The `DiceMetadataKeys.METAMODEL_VERSION`
+  metadata key is removed; lineage answers per-proposition attribution.
+  **Compatibility: breaking.** The key is no longer available; code holding it
+  must migrate to extraction-run queries.
+- Drivine/Neo4j-backed `MetamodelVersionStore` in `dice-storage`
+  (`DrivineMetamodelVersionStore`): stamps persist as `(:MetamodelVersion)` nodes,
+  MERGEd on the natural key `(schemaName, contentHash)`, so a re-stamp updates in
+  place. `latestVersion`, `versionHistory` and `findVersion` all resolve in Cypher.
+  History is ordered by a persisted per-schema sequence, taken off a
+  `(:MetamodelSchemaCounter)` node in the same statement that creates the version;
+  `savedAt` and `savedAtEpochMillis` are informational, and nothing sorts on them.
+  An idempotent re-save leaves the counter and the sequence alone. Concurrent saves
+  of one version leave one node. Hosts must declare three uniqueness constraints:
+  `MetamodelVersion(schemaName, contentHash)`, `MetamodelSchemaCounter(schemaName)`,
+  and `MetamodelVersion(schemaName, sequence)`.
+  Declared aliases persist at both levels: the version-level `entityTypeAliases` map
+  as its own node property, and a property signature's former names as a fifth
+  `aliases` field inside the stored signature. Both are written only when they hold
+  something, so an alias-free stamp writes exactly the properties this mapper wrote
+  before aliases existed, and a node from that older build reads back as a stamp
+  declaring none. Aliases feed `contentHash`, and the mapper recomputes the hash from
+  the persisted fields, so a stamp that failed to store them would be unreadable for
+  good — pinned by an integration test that writes a row in the old four-field shape
+  through raw Cypher and reads it back, one that round-trips a stamp carrying both
+  alias kinds, and one that removes the stored alias map and asserts the integrity
+  check rejects the row.
+  `savedAt` and `savedAtEpochMillis` keep their existing behavior: set on create,
+  untouched by a re-save. `dice-metamodel` gains `InMemoryMetamodelVersionStore`, the
+  reference implementation of the store contract, promoted from a private class in
+  that module's own tests. `AbstractMetamodelVersionStoreContractTest` runs one suite
+  against both stores.
+  **Compatibility: additive.** New classes, and a new `dice-storage` → `dice-metamodel`
+  module dependency; no existing API touched. Stored nodes stay readable: every
+  property that existed before keeps its name, meaning, and encoding, and the two
+  new alias fields are absent when nothing declares them.
+- Schema diffing contracts in `dice-metamodel`: `MetamodelDiffer` compares two declared
+  stamps and returns a `MetamodelDiff`, an ordered, canonically sorted list of sealed
+  `MetamodelChange` entries. The taxonomy covers property *signatures* as well as names.
+  Alongside `EntityTypeAdded`/`Removed`/`Modified` and `RelationshipAdded`/`Removed`, a
+  `PropertySignatureChanged` pairs `before` and `after` for a property that kept its name
+  and changed value type, cardinality, or value-vs-reference kind, which a name-only diff
+  reports as no change at all. `DeclaredObservedDiffer` compares a `DeclaredSchema` against
+  an `ObservedSchema` snapshot of a live graph, separating drift (observed but undeclared,
+  actionable) from unobserved (declared but empty, normal). That comparison is names-only
+  on the observed side: a graph reports labels and relationship types, and cannot report
+  declared property shapes. `ObservedSchemaSource` is the SPI a storage backend implements
+  in a later slice; `ObservedSchema` is a plain value type, so tests drive the whole
+  comparison from a canned snapshot. `StructuralMetamodelDiffer` implements both
+  interfaces: deterministic, stateless, no database and no LLM. This slice adds no drift
+  runner, no quarantine, no Spring wiring, and no new dependency.
+  **Compatibility: additive.** New types in an existing module; no existing API touched.
+
+- Declared renames in the diff, **EXPERIMENTAL** (shape may change before 1.0): five new
+  `MetamodelChange` members — `PropertyRenamed(typeName, before, after)`,
+  `EntityTypeRenamed(before, after)`, `EntityTypeAliasesChanged(typeName, before, after)`,
+  `AmbiguousEntityTypeRename(formerNames, candidates)` and
+  `AmbiguousPropertyRename(typeName, formerNames, candidates)`.
+  A rename declared through `SchemaAliases` now pairs instead of reading as a removal and an
+  addition. Pairing runs on what is left after the ordinary name matching and needs an
+  exclusive claim on both sides, among the claims in the running: the old name is claimed by
+  one new name alone, and that new name claims one old name alone. A surviving type's alias on
+  the removed name, and a property name carrying two signatures, never enter the running and so
+  contest nothing. Anything else is contested and pairs nothing — two new
+  types both declaring `Person` as a former name, one new type claiming two old names that
+  were both live, or claims that chain the two together. The contested names all report as
+  ordinary additions and removals, and one `AmbiguousEntityTypeRename` or
+  `AmbiguousPropertyRename` carries the whole group, so a declaration the differ set aside is
+  visible rather than silent. It reports rather than throws: a schema in this state stamps
+  cleanly today, and a caller comparing two historical stamps out of a store cannot edit
+  either side. A property name the type-merge path holds two signatures for is out of the
+  running before claims are read and falls back to a removal and an addition. Paired
+  properties are excluded from
+  `EntityTypeModified.addedProperties`/`removedProperties`, and an entry left empty by that
+  is not emitted. Type pairing matches the whole accumulated alias set, so a type renamed
+  twice still pairs across stamps that aren't adjacent, and it suppresses the
+  `EntityTypeAdded`/`EntityTypeRemoved` pair, reporting the type's other deltas under the new
+  name. After pairing, the older version is compared modulo the renames the diff found: old
+  name for new is substituted in `Kind.REFERENCE` signature targets and in label sets, and
+  nowhere else. A delta that vanishes under the substitution folds into `EntityTypeRenamed`,
+  and one that survives reports in substituted form (a referrer that moved `A → D` while `A`
+  was renamed to `B` reports `B → D`). `Kind.VALUE` type strings are left alone, so an entity
+  type named `Date` renaming to `Timestamp` does not rewrite every property declared as
+  holding a `Date` value. Rendered relationship descriptors are left alone too, so a
+  relationship touching a renamed endpoint still churns as a removal plus an addition; the
+  names inside a descriptor are free text and are never parsed. Alias-only edits have
+  representations, so an empty diff and an equal `contentHash` keep meaning the same thing: a
+  property whose aliases alone moved is an ordinary `PropertySignatureChanged`, and a type's
+  is an `EntityTypeAliasesChanged`. Declared former names join the declared side of
+  `diffAgainstObserved`, so data still carrying a renamed type's old label is not drift.
+  `MetamodelDiff.touchedEntityTypes` covers the new kinds, and contributes both names of a
+  rename and every name in a contested claim. `MetamodelDiff` gains four typed accessors —
+  `ambiguousEntityTypeRenames`, `ambiguousPropertyRenames`, `addedRelationships` and
+  `removedRelationships` — so the only kinds still reached through `filterIsInstance` are
+  `EntityTypeRenamed`, `EntityTypeAliasesChanged` and `PropertyRenamed`, whose accessors land
+  with the drift slice. A partition test pins the accessors against the change list on a diff
+  holding every kind they cover.
+  **Compatibility: breaking for external exhaustive `when` expressions.** `MetamodelChange`
+  is a sealed interface, and five new members make any `when` over it outside this repo
+  non-exhaustive until it handles them. Stated and accepted: the taxonomy is designed to be
+  exhausted, and a consumer that silently treated a rename as an unhandled kind would treat
+  it as harmless. Nothing else changes for a schema that declares no aliases — pairing and
+  substitution are no-ops with an empty alias map, and the existing diff behavior, ordering
+  and output are unchanged. Binary compatibility is untouched; consumers recompile.
+
+- Type identity in the declared/observed comparison. `DeclaredSchema.entityTypeOwnLabels` holds
+  the label each declared entity type writes onto a node: the declared name cut at its last dot,
+  derived through the new `DeclaredSchema.ownLabelOf` helper. A JVM-backed type is declared by its
+  class name, so a stamp holds `com.example.Person` while extraction records the mention as
+  `Person` and the graph reports `Person` as the label. `diffAgainstObserved` put those two
+  spellings side by side, which reported one healthy type twice — as an unobserved declaration,
+  and as drift under the very label it was written with. Both directions now match on either
+  spelling: a declared type counts as observed when the graph reports its declared name or its own
+  label, and the drift exclusion covers the own labels of the declared types, of declared former
+  names, and of the known-but-ungoverned types, which reach the check carrying no label set of
+  their own. What gets reported is unchanged — an unobserved type comes back under the name the
+  stamp declares. Two declared names differing only in their package share one own label and the
+  set holds it once, which is what a graph does as well: a label carries no package, so a node
+  written under either type reads back the same way. A schema whose declared names hold no dots
+  behaves as it did before, pinned by the existing suite.
+  Alongside it, `TypeIdentity`, **EXPERIMENTAL** (shape may change before 1.0): the interface a
+  host implements to say which declared entity type an outside name means, for names arriving from
+  a TypeScript API, an OpenAPI document, or any other system that spells types its own way. This
+  slice ships it as a specification — KDoc, a stated contract (total, deterministic,
+  round-tripping, many-to-one, exact string matching) and a worked OpenAPI example. Nothing in
+  DICE implements it, calls it or wires it; the shipped differ compares on the own-label rule
+  above, which covers the graph.
+  **Compatibility: additive, carrying one behavioral fix.** One new property on `DeclaredSchema`,
+  one new static helper, one new interface; no existing API touched. `contentHash` is untouched:
+  own labels are derived on demand and reach no hash. The behavioral part is the fix itself — for
+  a host declaring fully qualified type names, a drift check that reported such a type in both
+  buckets at once reports it in neither. A host whose declared names hold no dots sees no change.
+- Drift checking and quarantine contracts in `dice-metamodel`, plus the default runner and a
+  reference sweep. **EXPERIMENTAL** (shape may change before 1.0) — opt-in: a host calls `DriftSweepCapable.sweep()`; nothing quarantines until then.
+  **A drift check reports and changes nothing.** `DriftCheckRunner` has one mode:
+  `run()` declares, stamps, observes, compares and persists a `DriftReport`, and holds no quarantine
+  policy and no proposition store, so no path through it can move a proposition or the swept
+  baseline. `DefaultDriftCheckRunner` stamps the declared version into the `MetamodelVersionStore` on
+  every run, before writing the report, so a report's `versionHash` always resolves through
+  `findVersion`; the write upserts on `(schemaName, contentHash)`, so an unchanged schema costs one
+  idempotent write, and it leaves the swept baseline alone. `DriftReportStore` is the durable log,
+  kept separate from the version store because stamps and reports have different volumes and
+  lifetimes. Every read on it is bounded: `driftReports`, `globalDriftReports` and
+  `driftReportsInContext` each take a `limit` and an optional `since`, and none has a default body,
+  because filtering a limited page down to one scope in memory applies the limit before the filter
+  and can report zero drift while plenty sits in the store.
+  **A report carries both halves of the comparison.** `DriftReport` records declared-vs-observed
+  drift (`driftedEntityTypes`, `driftedRelationshipTypes`) *and* `declaredDiff`, how the declaration
+  itself moved since the last completed sweep, compared with a `MetamodelDiffer` against
+  `SweptBaselineStore.sweptVersion`. The second comparison is what lets a property removed or
+  narrowed, or a whole type dropped from the declaration itself, show up even when the live graph and
+  the new declaration still agree on everything the graph currently holds — declared-vs-observed
+  alone is blind to that case, since nothing about the type is undeclared and only its shape moved.
+  `DriftReport.quarantineDiff(declaredVersion)` and `DriftCheckResult.quarantineDiff` merge the two
+  into the exact comparison a sweep evaluates, so a report can no longer read clean while a sweep on
+  the same state would quarantine. `hasDrift` keeps its narrow graph-truth meaning; the new
+  `hasAnyChange` answers "would a sweep find anything at all to look at?".
+  **Sweeping is a documented SPI a host invokes.** The new `DriftSweepCapable` defines
+  `quarantineCandidates(contextId, mentionTypes, limit, afterId)` — bounded by `limit`, confined to
+  one *required* `ContextId`, filtered on mention type by the backend, and ordered by proposition id
+  so `afterId` is a usable cursor, all three stated as contract requirements in its KDoc —
+  `applyQuarantine(decision)`, and `releaseFromQuarantine(propositionId)`, plus a defaulted `sweep`
+  that pages through the candidates and persists what the policy flags. A store implements it when
+  its backend can honour that, the way DICE's other opt-in store capabilities work; there is no
+  whole-graph read and no whole-graph sweep. The mention types come from the new
+  `DriftQuarantinePolicy.candidateMentionTypes(diff)`, so the store needs no policy knowledge of its
+  own, and the policy contract states the invariant that makes bounded selection sound: a proposition
+  whose mention types are all outside that set must evaluate to conforming.
+  `PropositionStoreDriftSweep` is the in-memory reference implementation over any `PropositionStore`;
+  it reads the one context and does the filter, ordering and page bound in the JVM, which is the part
+  a durable backend pushes down. There is no Drivine implementation, and nothing in DICE calls a
+  sweep on a timer or from auto-configuration.
+  **Quarantine is its own lifecycle status, so the hold has an owner.** `PropositionStatus` gains
+  `QUARANTINED`, and a drift sweep moves a stranded proposition there. A quarantine expressed as
+  `STALE` plus a metadata note sat directly in the decay path: `DecayStatusPolicy` moves any `STALE`
+  proposition back to `ACTIVE` once utility clears the recovery threshold, with no reason check, and
+  `DecayManager` persists that. A confident proposition held for schema drift was therefore revived by
+  the next decay sweep and held again by the next drift sweep, indefinitely. Recovery from quarantine
+  was a side effect of that overlap, with no operation behind it. `QUARANTINED` closes it structurally: reads
+  that filter on `ACTIVE` exclude it, `DecayStatusPolicy` never sees a `STALE` to revive *and* returns
+  `null` for `QUARANTINED` outright (so a host that widens `DecaySweepConfig.targetStatuses` to every
+  status still can't lift a hold), `pruneStale` leaves it alone, contradiction resolution and the
+  abstraction pass read `ACTIVE` and never reach it, and the policy's already-quarantined check is the
+  status alone — editing the reason metadata by hand releases nothing.
+  `ProjectionLineageStaleCascade` treats `QUARANTINED` as terminal alongside `SUPERSEDED`,
+  `CONTRADICTED` and `STALE`, so a quarantine still marks derived projection records stale.
+  **Release is a real operation, and now the only way out.** `releaseFromQuarantine` restores the
+  status a proposition carried before quarantine, clears its quarantine metadata, and announces the
+  transition, in one write. The status to restore comes from the new
+  `DriftQuarantineKeys.PREVIOUS_STATUS` (`dice.metamodel.quarantine.previousStatus`), which the policy
+  writes onto the quarantined copy; a proposition with no usable value there is released to `ACTIVE`.
+  Releasing a proposition that isn't quarantined answers `null`, so releasing twice is safe.
+  **The swept baseline moves only for a completed sweep.** `sweptVersion` and `markSwept` live on the
+  new `SweptBaselineStore : MetamodelVersionStore`, with no default bodies, and the host that ran the
+  sweep is what calls `markSwept` once every context is reconciled. Splitting them off is the fix for
+  a real hazard: a forwarding default answering `latestVersion` made every store look like it tracked
+  a baseline while answering with write order, so a check's own stamp, a scoped sweep, or a crashed
+  one each retired a change nothing had swept for. A store that implements nothing here now reports
+  `declaredDiff = null` and gets the graph-truth half alone, which is the honest answer;
+  `InMemoryMetamodelVersionStore` implements the capability with real swept-state semantics, and
+  `latestVersion` alone still gets the wrong answer once a schema's declaration cycles back to a stamp
+  it already used (`A` → `B` → `A` leaves `B` as the write-order latest, per `saveVersion`'s existing
+  re-save contract, even though `A` is what's declared again).
+  Quarantine itself is non-destructive, idempotent, and honors pinning. `DriftQuarantinePolicy`
+  returns `QuarantineDecision`s (`Conforming` / `Quarantined` / `AlreadyQuarantined` / `Protected`);
+  only `Quarantined` is an immutable `QUARANTINED` copy carrying a reason and the status it came from, for
+  the caller to persist — the other three carry the proposition back untouched. A pinned proposition
+  a lossy change would otherwise catch comes back `Protected`, untouched, per DICE's cross-cutting pin
+  promise, with the same reason text so an operator can still see what it would have caught. The
+  shipped `MentionTypeDriftQuarantinePolicy` fires on lossy changes only: a removed type, a type that
+  lost labels or properties, or a property whose signature narrowed (type changed, value ↔ reference,
+  or cardinality shrank along `ONE` ⊂ `OPTIONAL` ⊂ `SET` ⊂ `LIST`). An inherited label observed in
+  the graph counts as declared, so it never quarantines. **Type identity now matches on both
+  spellings of a declared name** — the name as declared and the label it writes onto a node
+  (`DeclaredSchema.ownLabelOf`) — so a lossy change on a fully qualified `com.example.Person` reaches
+  propositions whose mentions say plain `Person`, and a known-but-ungoverned `com.example.Sighting`
+  is recognised as the declared type it is. This matches what `DeclaredObservedDiffer` already did on
+  the declared side, so the two halves of a check agree about which type is which; a mention matching
+  under the other spelling of its own type is ordinary matching and is never reported as a former
+  name. Each proposition a sweep quarantines is announced to its `DiceEventListener` as a
+  `PropositionStatusChanged`, emitted by the sweep itself so the signal doesn't depend on whether the
+  injected `PropositionStore` happens to be wrapped in something like
+  `EventEmittingPropositionRepository` — the default auto-configured store isn't. A proposition
+  already `STALE` from ordinary decay is a fresh candidate, moves `STALE` → `QUARANTINED`, and a
+  later release puts it back to `STALE`. A release announces the transition back. This is what lets a
+  listener such as `ProjectionLineageStaleCascade` mark a quarantined proposition's projection records
+  stale in turn.
+  **The quarantine machinery lives in `dice` core, in `com.embabel.dice.spi`.**
+  `DriftQuarantinePolicy`, `DriftQuarantineKeys`, `QuarantineDecision`, `QuarantineResult`,
+  `DriftSweepCapable`, `MentionTypeDriftQuarantinePolicy` and `PropositionStoreDriftSweep` sit beside
+  `StatusTransitionPolicy` and `SweepPolicy`, because moving a proposition between lifecycle statuses
+  is what that package is for. The module dependency now points one way: `dice` depends on
+  `dice-metamodel` to read a `MetamodelDiff`, and `dice-metamodel` is a leaf over the agent
+  `DataDictionary` again with no view of the proposition model at all. A drift check therefore has no
+  type through which it could reach a proposition, which is the structural half of "a check changes
+  nothing". `embabel-agent-rag-core` remains a `provided` dependency of `dice-metamodel`.
+  **Compatibility: additive on the released surface, with three source-breaking exceptions.**
+  `DefaultDriftCheckRunner`'s constructor gains a *required* `metamodelDiffer: MetamodelDiffer`
+  parameter (the declared-vs-previous comparison) — every existing caller must start supplying one.
+  `QuarantineDecision` is a sealed interface gaining a fourth member, `Protected`, so an external
+  exhaustive `when` over it needs a new branch to keep compiling — the same shape of change already
+  accepted for `MetamodelChange` in this same Unreleased block. `PropositionStatus` gains
+  `QUARANTINED`, so an exhaustive `when` over the enum needs a new branch too; inside DICE there was
+  exactly one (`DefaultDreamLoopOrchestrator.statusStrength`, where `QUARANTINED` now ranks above
+  every automatic retirement, since letting one overwrite a governance hold would drop the reason and
+  the recorded prior status with it), and a host that matches on status exhaustively is the known
+  consumer shape, which recompiles. Persistence is by enum *name* throughout (`PropositionGraphMapper`,
+  `CollectorTraceRowMappers`, `LineageRowMappers`), so no stored value changes meaning. The
+  quarantine types keep their names and move package, from `com.embabel.dice.metamodel` and
+  `com.embabel.dice.metamodel.support` to `com.embabel.dice.spi`; they were added in this same
+  Unreleased block and have never shipped. Everything else stays additive: `MetamodelVersionStore` is
+  unchanged, so every existing implementation — `DrivineMetamodelVersionStore` included — keeps
+  compiling untouched, and a backend opts into baseline tracking by implementing `SweptBaselineStore`
+  when it is ready; `QuarantineResult` gains a `protected: List<QuarantineDecision.Protected>`
+  parameter defaulted to empty, so existing callers of its constructor are unaffected.
+
+- Rename-aware quarantine and a type-widening allow-list in
+  `MentionTypeDriftQuarantinePolicy`, **EXPERIMENTAL** (behavior may change before 1.0).
+  A declared rename no longer quarantines anything on its own: `EntityTypeRenamed` and
+  `PropertyRenamed` are non-lossy per se, and `EntityTypeAliasesChanged` never quarantines.
+  A paired property rename whose two signatures also differ is judged on that delta by exactly
+  the `PropertySignatureChanged` narrowing rules, so `age: integer LIST` renamed to
+  `years: integer ONE` still quarantines. Candidate matching goes through former names: a
+  mention type is checked against its own name plus every current type name that used to go by
+  it, read off the newer version's whole `MetamodelVersion.entityTypeAliases` map rather than the
+  renames this particular diff carries — so a diff that only drops a property from a type renamed
+  two stamps ago still reaches data written under the old name. Reading the declaration is safe
+  because the reuse-collision refusal already guarantees an alias never names a live declared type.
+  A **removed** type resolves from the older version instead, since the newer one has no entry for
+  it: deleting `C` outright quarantines data labelled with every name `C` had gone by, excluding any
+  the newer version declares as a live type of its own (reusing a retired name is legal once its
+  claimant is gone, and data under it is judged as that live type's). Retiring a former name stops
+  it matching — retirement says the schema no longer claims the name, and data still carrying it is
+  reported by the observed-side comparison as ordinary undeclared drift.
+  Former names accumulate, so a type renamed `A` → `B` → `C` declares `{A, B}` and a lossy change
+  on `C`, or `C` being removed, quarantines data labelled `A`, `B` or `C` alike — however many
+  renames deep the old label sits, and whether or not the rename rides in the same diff as the
+  loss. A former name claimed by two live types is checked against both. The quarantine reason
+  names which schema type an old name resolved to.
+  Alongside it, four value type promotions are now treated as non-lossy: `int` → `long`,
+  `float` → `double`, `Integer` → `Long`, `Float` → `Double`. Iceberg defines two of these as safe
+  column promotions, `int` → `long` and `float` → `double`; the boxed pair is the same two as a JVM
+  dictionary spells them, and Iceberg's reason carries over: every value of the older type has an
+  exact representation in the newer one. Primitive-to-primitive and boxed-to-boxed only, so `int` →
+  `Long` (boxing) and `Integer` → `long` (nullability) stay lossy, as does every reversal and
+  every pair off the list. The list is scoped to `Kind.VALUE`, since one entity type is never a
+  promotion of another. It is published as
+  `MentionTypeDriftQuarantinePolicy.SAFE_TYPE_WIDENINGS` and pinned by a test that renders a
+  real eight-field declaration through `PropertySignature.of`, so a rendering change in the
+  upstream dictionary fails the build rather than quietly emptying the list.
+  `MetamodelDiff` gains `renamedEntityTypes`, `entityTypeAliasChanges` and `renamedProperties`,
+  the same convenience accessors the older change kinds already had.
+  **Compatibility: behavioral.** Which change you see depends on whether the schema declares
+  aliases. For a schema declaring none, matching is exactly what it was and the only move is
+  permissive: a property whose value type went along one of the four allow-listed pairs no longer
+  quarantines. Propositions an earlier sweep quarantined for one of those widenings stay
+  quarantined — the already-quarantined check runs before any matching and nothing lifts a hold on
+  its own, so no stored proposition changes state without an operator. To release them, call
+  `releaseFromQuarantine` on those propositions and re-run the check; under the new rule they come
+  back conforming. For a schema that declares aliases, matching now reaches
+  data under a type's former names, so a proposition mentioning an old type name can newly
+  quarantine when the renamed type lost something — which is the point: the old name is what the
+  graph stores. Aliases arrive in this same Unreleased block, so no consumer can be in that state
+  on a published build. The API is additive: three read-only accessors and one public constant,
+  and no existing signature changed.

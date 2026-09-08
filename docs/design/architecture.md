@@ -12,10 +12,11 @@ DICE is a multi-module Maven build. Each module's intent, and what it's allowed 
 | Module | Intent |
 |---|---|
 | `dice` | The core: proposition model, pipeline, gates, projection interfaces, query facades, agent tools, REST controllers. In-memory implementations only — no database driver. |
-| `dice-storage` | The durable Neo4j backend: `Drivine`-based repository, graph/Prolog/lineage projectors, schema and index bootstrap. Depends on `dice`. |
+| `dice-storage` | The durable Neo4j backend: `Drivine`-based repository, graph/Prolog/lineage projectors, schema and index bootstrap, `MetamodelVersionStore` persistence. Depends on `dice` and `dice-metamodel`. |
 | `dice-storage-autoconfigure` | Spring Boot autoconfiguration that wires `dice-storage`'s beans (repository, projectors, trust scorer) into a host application. Depends on `dice-storage`. |
 | `dice-ingestion` | Content-hash dedup ledger and source adapters that sit in front of `PropositionPipeline`, so the same artifact is never extracted twice concurrently. Depends on `dice`. |
 | `dice-report` | Rationale and structured report generation over propositions and their lineage. Depends on `dice`. |
+| `dice-metamodel` | Schema governance: content-hash stamps over the governed part of a `DataDictionary`, the declared-schema seam, the version and drift-report store contracts, diffing, drift checking, and non-destructive quarantine. A leaf over `embabel-agent-api`, with no dependency on `dice`; `dice-storage` implements its store contracts. |
 | `dice-integration-tests` | End-to-end tests exercising the real Neo4j backend and full pipeline across module boundaries. Depends on `dice`, `dice-ingestion`, `dice-report` (and transitively `dice-storage`). Not shipped. |
 
 ```mermaid
@@ -25,9 +26,12 @@ flowchart TB
     autoconf["dice-storage-autoconfigure<br/>(Spring Boot wiring)"]
     ingestion["dice-ingestion<br/>(dedup ledger)"]
     report["dice-report<br/>(rationale/reports)"]
+    metamodel["dice-metamodel<br/>(schema governance)"]
     itest["dice-integration-tests"]
 
     storage --> dice
+    storage --> metamodel
+    dice --> metamodel
     autoconf --> storage
     ingestion --> dice
     report --> dice
@@ -36,10 +40,13 @@ flowchart TB
     itest --> report
 ```
 
-`dice` never depends on any other DICE module — it's the leaf of the graph, so every other module
-can be added or removed without touching core logic. `dice-storage-autoconfigure` is the only
-module that knows about Spring Boot autoconfiguration; plain `dice-storage` stays framework-neutral
-so it can be wired by hand outside Spring Boot.
+`dice-metamodel` is a leaf with no dependency on `dice` — it takes no storage, no Spring, and no
+graph driver. `dice` depends on `dice-metamodel` to read a `MetamodelDiff`. One DICE module depends on both:
+`dice-storage`, which implements the `MetamodelVersionStore` and `DriftReportStore` contracts against Neo4j.
+Quarantine marks a proposition `PropositionStatus.QUARANTINED` and is declared in `dice`, so the machinery
+stays in core logic without back-depending to the schema model.
+`dice-storage-autoconfigure` is the only module that knows about Spring Boot autoconfiguration;
+plain `dice-storage` stays framework-neutral so it can be wired by hand outside Spring Boot.
 
 ### Subsystem design docs
 
@@ -62,6 +69,9 @@ Each subsystem below the module level has its own design note:
 - [durable-storage](durable-storage.md) — `dice-storage` backend, schema, indexes
 - [events](events.md) — `DiceEvent` model and emitters
 - [report](report.md) — `dice-report` rationale and structured reports
+- [metamodel-versioning](metamodel-versioning.md) — `MetamodelVersion` stamping, per-type governance
+- [metamodel-diff](metamodel-diff.md) — the change taxonomy, declared-vs-declared and declared-vs-observed
+- [metamodel-drift](metamodel-drift.md) — `DriftCheckRunner`, drift reports, non-destructive quarantine
 - [web-api](web-api.md) — REST surface (`DiscoveryController` and friends)
 
 ## System-level map
