@@ -145,11 +145,15 @@ hand a listener to the pipeline, and combine several listeners with `CompositeDi
 Every event is set up for polymorphic JSON, so a listener can forward them out of process.
 
 ```kotlin
-val repo = EventEmittingPropositionRepository(
+val repo = EventEmittingPropositionRepository.wrapping(
     delegate = inMemoryRepository,
     listener = SafeDiceEventListener(myListener),
 )
 ```
+
+`wrapping` answers source-revision queries when the store it wraps does: it picks a wrapper that
+carries `SourceRevisionQueryCapable` when `delegate` implements it, and a plain wrapper otherwise, so
+a caller's `as?` probe on the wrapper sees the same answer it would on the delegate.
 
 A listener is a one-method fun interface, so a lambda or a class both work:
 

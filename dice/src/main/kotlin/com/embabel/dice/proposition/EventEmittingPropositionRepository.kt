@@ -49,9 +49,14 @@ import org.slf4j.LoggerFactory
  * Throw isolation is the listener's responsibility — wrap the listener in `SafeDiceEventListener`
  * if you need graceful degradation.
  *
+ * This class does not itself implement `SourceRevisionQueryCapable`, so it carries the capability
+ * only when its delegate does: use [wrapping] to build the right shape for whatever delegate you
+ * hand it, so a caller's `as? SourceRevisionQueryCapable` probe on the wrapper answers the same way
+ * it would on the delegate.
+ *
  * Example usage:
  * ```kotlin
- * val repo = EventEmittingPropositionRepository(
+ * val repo = EventEmittingPropositionRepository.wrapping(
  *     delegate = inMemoryRepository,
  *     listener = SafeDiceEventListener(myListener),
  * )
@@ -60,12 +65,33 @@ import org.slf4j.LoggerFactory
  * @property delegate The underlying repository. All non-write methods forward here.
  * @property listener Notified after each persist. Defaults to [DiceEventListener.DEV_NULL] (no-op).
  */
-class EventEmittingPropositionRepository(
-    private val delegate: PropositionRepository,
+open class EventEmittingPropositionRepository(
+    protected val delegate: PropositionRepository,
     private val listener: DiceEventListener = DiceEventListener.DEV_NULL,
 ) : PropositionRepository by delegate {
 
     private val logger = LoggerFactory.getLogger(EventEmittingPropositionRepository::class.java)
+
+    companion object {
+        /**
+         * Build the decorator over [delegate], picking the shape that matches what [delegate] can
+         * do: when it implements [SourceRevisionQueryCapable], the returned instance does too and
+         * forwards to it, so a caller's `as?` probe on the wrapper answers the way it answers on the
+         * delegate. Over a plain repository, the returned instance carries no source-revision
+         * surface at all.
+         */
+        @JvmStatic
+        @JvmOverloads
+        fun wrapping(
+            delegate: PropositionRepository,
+            listener: DiceEventListener = DiceEventListener.DEV_NULL,
+        ): EventEmittingPropositionRepository =
+            if (delegate is SourceRevisionQueryCapable) {
+                SourceRevisionEventEmittingPropositionRepository(delegate, listener)
+            } else {
+                EventEmittingPropositionRepository(delegate, listener)
+            }
+    }
 
     /**
      * Persists via the delegate, then emits one lifecycle event carrying the saved instance.
@@ -146,3 +172,19 @@ class EventEmittingPropositionRepository(
     ): List<Cluster<Proposition>> =
         delegate.findClusters(similarityThreshold, topK, query)
 }
+
+/**
+ * The same event-emitting decorator, over a delegate that also answers source-revision queries.
+ *
+ * Carrying `SourceRevisionQueryCapable by delegate` here and not on the base class is what makes
+ * the capability honest: a caller's `as? SourceRevisionQueryCapable` probe on this wrapper answers
+ * exactly the way it would on the delegate. It cannot pass the type check and then fail at call
+ * time. Built by [EventEmittingPropositionRepository.wrapping]; construct it directly only if you
+ * already have a delegate typed as both interfaces in hand.
+ */
+class SourceRevisionEventEmittingPropositionRepository<T>(
+    delegate: T,
+    listener: DiceEventListener = DiceEventListener.DEV_NULL,
+) : EventEmittingPropositionRepository(delegate, listener),
+    SourceRevisionQueryCapable by delegate
+    where T : PropositionRepository, T : SourceRevisionQueryCapable
