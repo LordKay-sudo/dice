@@ -1,2 +1,2 @@
 [[authors]]
-Rod Johnson, James Dunnam, Jasper Blues, Alex Hein-Heifetz, tschuehly, Deniz Silahcilar, Lordwill Kandiro
+Rod Johnson, James Dunnam, Jasper Blues, Thomas Schilling, Alex Hein-Heifetz
