@@ -37,6 +37,37 @@ docling ./target/generated-docs/index.html --from html --to md \
 
 This writes `index.md` alongside the HTML.
 
+## Publishing
+
+`.github/workflows/deploy-docs.yml` ("Publish Docs") builds the guide and the aggregated Dokka API
+docs and deploys both to the Embabel web server under a versioned path:
+
+- `https://docs.embabel.com/dice/guide/<version>/index.html`
+- `https://docs.embabel.com/dice/api-docs/<version>/index.html`
+
+It runs on three triggers:
+
+| Trigger | When |
+|---|---|
+| `repository_dispatch` (`publish-docs`) | The Build workflow's `trigger-docs` job fires it after a green build on `main` that touched a `.adoc` file. |
+| `push` to `main` | Any push touching `dice-user-guide/**/*.adoc`. |
+| `workflow_dispatch` | Manually, with environment / VM instance / zone as inputs. |
+
+The build step is `mvn -B -Pguide-html,dokka package`, run from this directory so the parent pom
+resolves on disk — which is what makes `${project.parent.basedir}` work for the dokka profile's
+sibling-module source paths.
+
+Required repository secrets: `GCP_SERVICE_ACCOUNT_CREDENTIALS` (deploy) and `PAT_TOKEN` (the
+dispatch from Build).
+
+Build the API docs locally with:
+
+```bash
+mvn -pl dice-user-guide -P guide-html,dokka package
+```
+
+Output lands in `target/dokka-aggregate`.
+
 ## Layout
 
 | Path | Contents |

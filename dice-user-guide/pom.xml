@@ -184,6 +184,70 @@
                 </plugins>
             </build>
         </profile>
+        <profile>
+            <!--
+                Aggregate API docs for every published module into one Dokka site.
+                Activated explicitly by the Publish Docs workflow: mvn -Pguide-html,dokka package
+            -->
+            <id>dokka</id>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.jetbrains.dokka</groupId>
+                        <artifactId>dokka-maven-plugin</artifactId>
+                        <executions>
+                            <execution>
+                                <id>aggregate-docs</id>
+                                <phase>prepare-package</phase>
+                                <goals>
+                                    <goal>dokka</goal>
+                                </goals>
+                                <configuration>
+                                    <!-- Collect source from all sibling modules -->
+                                    <sourceDirectories>
+                                        <dir>${project.parent.basedir}/dice/src/main/kotlin</dir>
+                                        <dir>${project.parent.basedir}/dice-storage/src/main/kotlin</dir>
+                                        <dir>${project.parent.basedir}/dice-storage-autoconfigure/src/main/kotlin</dir>
+                                        <dir>${project.parent.basedir}/dice-report/src/main/kotlin</dir>
+                                        <dir>${project.parent.basedir}/dice-ingestion/src/main/kotlin</dir>
+                                    </sourceDirectories>
+                                    <!--
+                                        Override the samples directory inherited from
+                                        embabel-build-parent's plugin configuration, which points at
+                                        this module's own src/test/kotlin and does not exist here.
+                                    -->
+                                    <samples>
+                                        <dir>${project.parent.basedir}/dice/src/test/kotlin</dir>
+                                    </samples>
+                                    <!-- Platform settings -->
+                                    <platform>jvm</platform>
+                                    <includeNonPublic>false</includeNonPublic>
+                                    <reportUndocumented>true</reportUndocumented>
+                                    <skipEmptyPackages>true</skipEmptyPackages>
+                                    <jdkVersion>${java.version}</jdkVersion>
+                                    <languageVersion>${kotlin.compiler.apiVersion}</languageVersion>
+                                    <apiVersion>${kotlin.compiler.apiVersion}</apiVersion>
+                                    <noStdlibLink>false</noStdlibLink>
+                                    <noJdkLink>false</noJdkLink>
+                                    <suppressObviousFunctions>true</suppressObviousFunctions>
+                                    <outputDir>${project.build.directory}/dokka-aggregate</outputDir>
+                                    <moduleName>DICE API Documentation</moduleName>
+                                    <externalDocumentationLinks>
+                                        <link>
+                                            <url>https://docs.spring.io/spring-framework/docs/current/javadoc-api/</url>
+                                        </link>
+                                        <link>
+                                            <url>https://docs.spring.io/spring-boot/docs/current/api/</url>
+                                        </link>
+                                    </externalDocumentationLinks>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+
     </profiles>
 
 </project>
