@@ -143,6 +143,82 @@ for a domain that is closed-world throughout.
 The model is Hibernate's `@Version`: governance is declared per entity, and nothing is versioned by
 default.
 
+### Saying it in steps
+
+Three positional arguments read poorly at the call site once all three are given, and the third is
+usually `SchemaAliases.NONE`. `MetamodelStamping` carries the same three and names each one as it
+is set:
+
+```kotlin
+val version = MetamodelVersion.stamping(dataDictionary)
+    .governedBy(governed)
+    .withAliases(aliases)
+    .stamp()
+```
+
+Every step returns a new stamping and leaves the one it was called on alone, so a partly built
+stamping is a value a caller can keep in a field and finish more than once. Governance by a set of
+names is common enough that `governedBy` takes one directly and builds the selector.
+
+The stamp and the declaration take the same three inputs, so one stamping finishes as either:
+`stamp()` for a `MetamodelVersion`, `declare()` for a `DeclaredSchema`. That makes the pairing rule
+below structural: both halves come from one set of arguments, so they cannot disagree about what is
+governed.
+
+Nothing is validated while chaining. The alias rules belong to the factories, so a bad declaration
+fails on the terminal call with the message the three-argument form gives.
+
+Every step is a plain method taking one argument, which is what keeps the chain identical from Java:
+
+```java
+MetamodelVersion version = MetamodelVersion.stamping(dataDictionary)
+        .governedBy(governed)
+        .withAliases(aliases)
+        .stamp();
+```
+
+The `from` overloads stay. They are the short forms, and the chain is the long one.
+
+### Saying it as a block
+
+Kotlin gets a receiver block, so the call site is a sequence of statements with no prefix and no
+chain:
+
+```kotlin
+val version = MetamodelVersion(dictionary) {
+    governedBy("Person", "Company")
+    aliases {
+        type("Organisation", formerly = setOf("Company"))
+        property("Person", "emailAddress", formerly = setOf("email"))
+    }
+}
+```
+
+The entry is `operator fun invoke` on the companion, which is how `embabel-agent` shapes its own
+configured constructors (`ActionContext`, `OperationContext`, `Tool.Definition`) and the same shape
+as `Json { }` and `HttpClient { }`. It reads as a constructor with a trailing block, which is what
+it is, and it stays on the class. `DeclaredSchema(dictionary) { }` is the same block finishing as a
+declaration, which is what keeps the stamp and the relationship names from disagreeing about what
+is governed. An empty block is the whole-schema stamp.
+
+The nested `aliases` block earns its place: `SchemaAliases` is two levels of map, and writing those
+literals at a call site is the least readable part of declaring a rename. Names accumulate there
+rather than replace, so a type renamed `A` to `B` to `C` declares both older names, which is what a
+comparison across non-adjacent stamps needs.
+
+`@DslMarker` scopes the two builders, so reaching the outer one from inside `aliases { }` is a
+compile error.
+
+The builders are mutable and live only for the block. Their constructors are internal, so one
+cannot be obtained outside a block, and what comes back is immutable. A block of statements against
+an immutable receiver would discard every call, which is why the mutability sits here and nowhere
+else.
+
+Java keeps the chain. A receiver lambda from Java means returning `Unit.INSTANCE` by hand, so the
+block is `@JvmSynthetic` and Java never sees it. Two entries off the one class, one per language:
+`MetamodelVersion(dictionary) { }` for Kotlin, `MetamodelVersion.stamping(dictionary)` for Java. A
+test asserts they reach the same stamp.
+
 Relationships follow the type that declares them. A governed type's outgoing relationship is part of
 that type's declared shape, so it stays in the stamp even when it points at an ungoverned type; a
 relationship declared *by* an ungoverned type is left out entirely. Without that rule, an
@@ -172,9 +248,9 @@ class MyAppDeclaredSchemaSource(
 }
 ```
 
-Versioning starts here: with no declared schema, nothing is stamped. The Spring wiring that lands
-in a later slice activates only when a `DeclaredSchemaSource` bean is present, so an application
-that hasn't decided what it governs is left alone.
+Versioning starts here: with no declared schema, nothing is stamped. The Spring wiring activates
+only when a `DeclaredSchemaSource` bean is present, so an application that hasn't decided what it
+governs is left alone. See [metamodel-wiring.md](metamodel-wiring.md).
 
 ## Declared renames
 
@@ -342,7 +418,7 @@ contract has an executable statement of what its rules mean; durable storage is 
 
 The durable implementation lives in `dice-storage`. `DrivineMetamodelVersionStore` keeps each stamp
 as a `(:MetamodelVersion)` node and MERGEs on `(schemaName, contentHash)`, so re-stamping an
-unchanged schema updates the node already there. Three things govern how it behaves:
+unchanged schema updates the node already there. Four things govern how it behaves:
 
 - **It needs three uniqueness constraints**, declared in a `SchemaCatalog` bean. A MERGE is
   race-free only when what it merges on is unique, so `MetamodelVersion(schemaName, contentHash)`
@@ -359,6 +435,13 @@ unchanged schema updates the node already there. Three things govern how it beha
 - **A re-save updates content only.** Sequence, counter, and `savedAt` keep their existing values,
   so an old stamp stays at its original position in the history. `InMemoryMetamodelVersionStore`,
   the reference implementation `dice-metamodel` ships, behaves the same way.
+- **The reconciled baseline tracks independently of write order.** This store supplies its own
+  `sweptVersion`/`markSwept`, leaving the interface's forwarding default behind: `markSwept` writes `sweptContentHash`
+  as a property on the schema's own `(:MetamodelSchemaCounter)` node, and `sweptVersion` resolves that
+  hash back through `findVersion`. An ordinary `saveVersion` never touches it, so a dry run, a scoped
+  run, or a crash mid-sweep — every path [metamodel-drift.md](metamodel-drift.md) walks through —
+  leaves the baseline exactly where it was, the same independence `InMemoryMetamodelVersionStore`
+  keeps in its separate `swept` map.
 
 The structural fields are stored as JSON strings, since Neo4j properties are scalars and flat
 arrays. Property signatures get explicit named fields with enums by name

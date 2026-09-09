@@ -76,6 +76,13 @@
             <artifactId>slf4j-api</artifactId>
         </dependency>
 
+        <!-- JetBrains annotations for @ApiStatus; the version comes from the root pom -->
+        <dependency>
+            <groupId>org.jetbrains</groupId>
+            <artifactId>annotations</artifactId>
+            <scope>provided</scope>
+        </dependency>
+
         <!-- Test: Drivine test support spins a Neo4j testcontainer; see TestApplication -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
